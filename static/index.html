@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Draft Auction House</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Draft Auction House</h1>
+    <div id="status" class="status"></div>
+    <span id="round-timer" class="timer"></span>
+    <div class="auth" id="auth">
+      <span id="auth-status" class="muted"></span>
+      <input id="token-input" type="text" placeholder="paste your token" autocomplete="off" />
+      <button id="btn-login">Log in</button>
+      <button id="btn-logout" class="ghost hidden">Log out</button>
+      <a class="navlink" href="/admin">Admin →</a>
+    </div>
+  </header>
+
+  <main>
+    <section id="no-game" class="card hidden">
+      <h2>No game in progress</h2>
+      <p class="muted">The host needs to open packs on the <a href="/admin">Admin page</a>. Once a game has started, log in with the token they give you.</p>
+    </section>
+
+    <div id="game" class="hidden">
+      <nav class="tabs">
+        <button class="tab active" data-tab="inventory">Inventory</button>
+        <button class="tab" data-tab="market">Market</button>
+      </nav>
+
+      <!-- ===== INVENTORY TAB ===== -->
+      <div id="tab-inventory" class="tabpane">
+        <div class="columns">
+          <section class="card">
+            <h2>Your Table <span id="me-balance" class="pill"></span></h2>
+            <div id="me-funds" class="funds muted"></div>
+            <div id="login-prompt" class="muted hidden">Log in with your token to place orders.</div>
+
+            <div id="dashboard">
+              <h3>Holdings</h3>
+              <table id="my-holdings"><tbody></tbody></table>
+
+              <h3>Place a Bid <span class="muted">(buy any card)</span></h3>
+              <div class="order-row buy">
+                <form id="bid-form" class="orderform">
+                  <select id="bid-card"></select>
+                  <input id="bid-qty" type="number" min="1" value="1" title="quantity" />
+                  <input id="bid-price" type="number" min="0" step="0.01" value="1.00" title="max $ each" />
+                  <button class="buy">Bid</button>
+                </form>
+                <img id="bid-preview" class="card-preview" alt="" />
+              </div>
+
+              <h3>Place an Offer <span class="muted">(sell a card you hold)</span></h3>
+              <div class="order-row sell">
+                <form id="offer-form" class="orderform">
+                  <select id="offer-card"></select>
+                  <input id="offer-qty" type="number" min="1" value="1" title="quantity" />
+                  <input id="offer-price" type="number" min="0" step="0.01" value="1.00" title="min $ each" />
+                  <button class="sell">Offer</button>
+                </form>
+                <img id="offer-preview" class="card-preview" alt="" />
+              </div>
+
+              <div id="order-error" class="error"></div>
+
+              <h3>Your Open Orders <span class="muted">(rest across rounds until filled or cancelled)</span></h3>
+              <div class="orders">
+                <div><h4>Bids</h4><table id="my-bids"><tbody></tbody></table></div>
+                <div><h4>Offers</h4><table id="my-offers"><tbody></tbody></table></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>Players</h2>
+            <table id="players">
+              <thead><tr><th>Player</th><th class="num">Money</th><th class="num">Cards</th></tr></thead>
+              <tbody></tbody>
+            </table>
+
+            <h2>Auction Results</h2>
+            <div id="history"></div>
+          </section>
+        </div>
+
+        <section class="card">
+          <h2>Planning <span class="muted">— click ★ to mark cards you want; click a card to enlarge</span></h2>
+          <div class="filters" data-prefix="inv">
+            <input class="f-q" type="search" placeholder="search name…" />
+            <select class="f-rarity"><option value="">all rarities</option></select>
+            <select class="f-type"><option value="">all types</option></select>
+            <input class="f-mvmin" type="number" min="0" placeholder="MV ≥" title="min mana value" />
+            <input class="f-mvmax" type="number" min="0" placeholder="MV ≤" title="max mana value" />
+            <select class="f-show">
+              <option value="all">all cards</option>
+              <option value="owned">owned</option>
+              <option value="wanted">wanted ★</option>
+            </select>
+            <span class="f-count muted"></span>
+          </div>
+          <table id="plan" class="grid">
+            <thead>
+              <tr>
+                <th data-sort="want" title="wanted">★</th>
+                <th data-sort="name">Card</th>
+                <th data-sort="type">Type</th>
+                <th data-sort="cmc" class="num">MV</th>
+                <th data-sort="rarity">Rarity</th>
+                <th data-sort="ref" class="num">Ref $</th>
+                <th data-sort="supply" class="num">Supply</th>
+                <th data-sort="mine" class="num">You</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </section>
+      </div>
+
+      <!-- ===== MARKET TAB ===== -->
+      <div id="tab-market" class="tabpane hidden">
+        <section class="card">
+          <h2>Market <span class="muted">— click a card to enlarge</span></h2>
+          <div class="filters" data-prefix="mkt">
+            <input class="f-q" type="search" placeholder="search name…" />
+            <select class="f-rarity"><option value="">all rarities</option></select>
+            <select class="f-type"><option value="">all types</option></select>
+            <input class="f-mvmin" type="number" min="0" placeholder="MV ≥" title="min mana value" />
+            <input class="f-mvmax" type="number" min="0" placeholder="MV ≤" title="max mana value" />
+            <select class="f-show">
+              <option value="all">all cards</option>
+              <option value="owned">owned</option>
+              <option value="wanted">wanted ★</option>
+            </select>
+            <select class="f-sort" title="sort by">
+              <option value="rarity">sort: rarity</option>
+              <option value="name">sort: name</option>
+              <option value="type">sort: type</option>
+              <option value="cmc">sort: mana value</option>
+              <option value="ref">sort: ref price</option>
+              <option value="supply">sort: supply</option>
+              <option value="mine">sort: your copies</option>
+            </select>
+            <button class="f-dir ghost" title="toggle direction">▼</button>
+            <span class="f-count muted"></span>
+          </div>
+          <div id="gallery" class="gallery"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <!-- ===== CARD MODAL ===== -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-body">
+      <button id="modal-close" class="modal-close" aria-label="close">✕</button>
+      <img id="modal-img" alt="" />
+      <div class="modal-info">
+        <h3 id="modal-name"></h3>
+        <div id="modal-meta"></div>
+        <button id="modal-want" class="ghost"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

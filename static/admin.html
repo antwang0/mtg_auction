@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Draft Auction House — Admin</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>⚔️ Auction Admin</h1>
+    <div id="status" class="status"></div>
+    <span id="round-timer" class="timer"></span>
+    <div class="auth" id="auth">
+      <span id="auth-status" class="muted"></span>
+      <input id="token-input" type="text" placeholder="paste host token" autocomplete="off" />
+      <button id="btn-login">Log in</button>
+      <button id="btn-logout" class="ghost hidden">Log out</button>
+      <a class="navlink" href="/">← Game</a>
+    </div>
+  </header>
+
+  <main>
+    <section id="setup" class="card">
+      <h2>New Game</h2>
+      <div class="grid-form">
+        <label>Players (comma separated)
+          <input id="cfg-players" type="text" value="Alice, Bob, Carol, Dave" />
+        </label>
+        <label>Set (Scryfall code)
+          <input id="cfg-set" type="text" value="dom" />
+        </label>
+        <label>Starting money ($)
+          <input id="cfg-money" type="number" step="0.01" min="0" value="100.00" />
+        </label>
+        <label>Debt limit ($)
+          <input id="cfg-debt" type="number" step="0.01" min="0" value="0.00" />
+        </label>
+        <label>Auction rounds
+          <input id="cfg-rounds" type="number" value="4" min="1" />
+        </label>
+        <label>Round timer (s, 0 = manual)
+          <input id="cfg-timer" type="number" value="0" min="0" />
+        </label>
+        <label>Packs to open
+          <input id="cfg-packs" type="number" value="4" min="1" />
+        </label>
+        <label>Cards per pack
+          <input id="cfg-packsize" type="number" value="15" min="1" />
+        </label>
+        <label>Seed
+          <input id="cfg-seed" type="number" value="42" />
+        </label>
+      </div>
+      <button id="btn-setup" class="primary">Open packs &amp; deal</button>
+      <p class="muted">The first player listed is the host. Cards are pulled from <a href="https://scryfall.com/sets" target="_blank" rel="noopener">Scryfall</a> by set code (e.g. <code>dom</code>, <code>mh3</code>, <code>woe</code>); use <code>sample</code> for the built-in offline set. Resetting a game in progress requires the current host token.</p>
+    </section>
+
+    <section id="tokens" class="card hidden">
+      <h2>Player Tokens</h2>
+      <p class="muted">Share each token privately with its player — they log in on the <a href="/">game page</a>. You've been logged in here as the host.</p>
+      <table id="token-table"><tbody></tbody></table>
+      <button id="btn-tokens-done" class="ghost">Hide</button>
+    </section>
+
+    <section id="controls" class="card hidden">
+      <h2>Round Control</h2>
+      <div id="round-info" class="muted"></div>
+      <div class="admin">
+        <button id="btn-close" class="primary">Close auction &amp; match orders</button>
+      </div>
+      <div id="ctrl-error" class="error"></div>
+    </section>
+
+    <div class="columns">
+      <section id="ledger-card" class="card hidden">
+        <h2>Order Ledger <span class="muted">(every bid &amp; offer)</span></h2>
+        <table id="ledger" class="grid">
+          <thead>
+            <tr><th class="num">#</th><th>Rd</th><th>Player</th><th>Action</th><th>Card</th><th class="num">Qty</th><th class="num">Price</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section id="trades-card" class="card hidden">
+        <h2>Trade History</h2>
+        <div id="history"></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
