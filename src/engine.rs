@@ -340,14 +340,43 @@ impl Game {
     pub fn close_round(&mut self) -> Result<RoundResult, String> {
         self.require_bidding()?;
 
-        let mut trades: Vec<Trade> = Vec::new();
         let cards: Vec<CardId> = self.card_order.clone();
-        for card in cards {
+
+        // Snapshot the top of each book before matching consumes it, so the
+        // round summary can show how close unfilled orders were.
+        let mut tob: HashMap<CardId, (Option<Cents>, Option<Cents>)> = HashMap::new();
+        for &card in &cards {
+            let best_bid = self.bids.values().filter(|o| o.card == card && o.qty > 0).map(|o| o.price).max();
+            let best_offer = self.offers.values().filter(|o| o.card == card && o.qty > 0).map(|o| o.price).min();
+            tob.insert(card, (best_bid, best_offer));
+        }
+
+        let mut trades: Vec<Trade> = Vec::new();
+        for &card in &cards {
             let mut card_trades = self.match_card(card);
             trades.append(&mut card_trades);
         }
 
-        let result = RoundResult { round: self.round, trades };
+        // Per-card clearing summary (only cards that had any order).
+        let mut clears: Vec<CardClear> = Vec::new();
+        for &card in &cards {
+            let (best_bid, best_offer) = tob[&card];
+            if best_bid.is_none() && best_offer.is_none() {
+                continue;
+            }
+            let volume: u32 = trades.iter().filter(|t| t.card == card).map(|t| t.qty).sum();
+            let cleared = trades.iter().filter(|t| t.card == card).next_back().map(|t| t.price);
+            clears.push(CardClear {
+                card,
+                card_name: self.cards[&card].name.clone(),
+                best_bid,
+                best_offer,
+                cleared,
+                volume,
+            });
+        }
+
+        let result = RoundResult { round: self.round, trades, clears };
         self.history.push(result.clone());
 
         if self.round >= self.config.rounds {

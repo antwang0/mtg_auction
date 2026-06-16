@@ -235,6 +235,36 @@ fn cannot_offer_more_than_held() {
 }
 
 #[test]
+fn round_result_reports_clears() {
+    let mut g = controlled_game();
+    let c = card1(&g);
+    g.players.get_mut(&2).unwrap().add_cards(c, 1);
+    g.place_offer(2, c, 1, 10).unwrap();
+    g.place_bid(1, c, 1, 20).unwrap();
+    let r = g.close_round().unwrap();
+    let cl = r.clears.iter().find(|x| x.card == c).expect("clear entry for the card");
+    assert_eq!(cl.best_bid, Some(20));
+    assert_eq!(cl.best_offer, Some(10));
+    assert_eq!(cl.cleared, Some(15));
+    assert_eq!(cl.volume, 1);
+}
+
+#[test]
+fn clears_record_top_of_book_even_without_a_fill() {
+    let mut g = controlled_game();
+    let c = card1(&g);
+    g.players.get_mut(&2).unwrap().add_cards(c, 1);
+    g.place_offer(2, c, 1, 30).unwrap();
+    g.place_bid(1, c, 1, 20).unwrap(); // no cross
+    let r = g.close_round().unwrap();
+    let cl = r.clears.iter().find(|x| x.card == c).expect("clear entry for the card");
+    assert_eq!(cl.best_bid, Some(20));
+    assert_eq!(cl.best_offer, Some(30));
+    assert_eq!(cl.cleared, None);
+    assert_eq!(cl.volume, 0);
+}
+
+#[test]
 fn rounds_advance_then_finish() {
     let mut g = controlled_game(); // 3 rounds
     assert_eq!(g.round, 1);

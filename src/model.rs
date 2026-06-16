@@ -196,10 +196,25 @@ pub struct Trade {
     pub offer: Cents,
 }
 
+/// Per-card clearing summary at a round close: the top of book before matching
+/// (so players see how close they were) and what actually traded.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CardClear {
+    pub card: CardId,
+    pub card_name: String,
+    pub best_bid: Option<Cents>,
+    pub best_offer: Option<Cents>,
+    /// Price the last trade for this card cleared at, if any traded.
+    pub cleared: Option<Cents>,
+    pub volume: u32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RoundResult {
     pub round: u32,
     pub trades: Vec<Trade>,
+    #[serde(default)]
+    pub clears: Vec<CardClear>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -68,7 +68,10 @@
 
               <div id="order-error" class="error"></div>
 
-              <h3>Your Open Orders <span class="muted">(rest across rounds until filled or cancelled)</span></h3>
+              <h3>Your Open Orders <span id="orders-count" class="badge"></span>
+                <button id="cancel-all" class="linkbtn hidden">cancel all</button>
+                <span class="muted">(rest across rounds until filled or cancelled)</span>
+              </h3>
               <div class="orders">
                 <div><h4>Bids</h4><table id="my-bids"><tbody></tbody></table></div>
                 <div><h4>Offers</h4><table id="my-offers"><tbody></tbody></table></div>
@@ -112,6 +115,7 @@
                 <th data-sort="cmc" class="num">MV</th>
                 <th data-sort="rarity">Rarity</th>
                 <th data-sort="ref" class="num">Ref $</th>
+                <th data-sort="last" class="num">Last</th>
                 <th data-sort="supply" class="num">Supply</th>
                 <th data-sort="mine" class="num">You</th>
               </tr>
@@ -142,6 +146,7 @@
               <option value="type">sort: type</option>
               <option value="cmc">sort: mana value</option>
               <option value="ref">sort: ref price</option>
+              <option value="last">sort: last price</option>
               <option value="supply">sort: supply</option>
               <option value="mine">sort: your copies</option>
             </select>
@@ -164,9 +169,36 @@
         <h3 id="modal-name"></h3>
         <div id="modal-meta"></div>
         <button id="modal-want" class="ghost"></button>
+
+        <div id="modal-trade">
+          <div id="modal-yours" class="modal-yours"></div>
+          <div class="modal-orderform">
+            <label>Qty <input id="m-qty" type="number" min="1" value="1" /></label>
+            <label>Price ($)
+              <span class="price-row">
+                <button type="button" class="step" data-delta="-25">−</button>
+                <input id="m-price" type="number" min="0" step="0.01" value="1.00" />
+                <button type="button" class="step" data-delta="25">+</button>
+              </span>
+            </label>
+            <div class="quickrow">
+              <button type="button" id="m-ref" class="ghost">ref</button>
+              <button type="button" id="m-last" class="ghost">last</button>
+            </div>
+            <div class="actrow">
+              <button type="button" id="m-bid" class="buy">Place Bid</button>
+              <button type="button" id="m-offer" class="sell">Place Offer</button>
+            </div>
+            <div id="m-afford" class="muted"></div>
+            <div id="m-error" class="error"></div>
+          </div>
+          <div id="modal-history" class="modal-history"></div>
+        </div>
       </div>
     </div>
   </div>
+
+  <div id="toasts" class="toasts"></div>
 
   <script src="/app.js"></script>
 </body>

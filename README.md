@@ -38,11 +38,25 @@ The player page has two tabs:
   **planning table** of every card in the game. Star a card to add it to your
   **want list** (saved in the browser); sort by any column and filter the table.
 - **Market** — a **gallery of card tiles** you can sort (name, rarity, type,
-  mana value, reference price, supply, your copies) and filter.
+  mana value, reference price, last clearing price, supply, your copies) and
+  filter.
 
-Both tabs filter by **name, rarity, card type, mana value, and owned/wanted**.
-**Click any card** (a tile, a row, or a thumbnail) to pop up a larger image with
-its full type line, mana cost, rarity, reference price and supply.
+Both tabs filter by **name, rarity, card type, mana value, and owned/wanted**,
+and your filter/sort choices are remembered between visits.
+
+**Click any card** (a tile, a row, or a thumbnail) to open it larger, where you
+can **bid or offer right there** — the price pre-fills from the last clearing
+price (or reference price), with `+`/`−` nudges and `ref`/`last` shortcuts, and
+a live readout of what the bid commits and what you'd have left. The modal also
+shows your current order on that card and its recent clearing history.
+
+Other trading conveniences: each card shows your resting **bid/ask inline** and
+its **last clearing price**; cards you can't afford are dimmed; your held copies
+show how many are **committed to offers**; there's a **cancel-all** button and
+an open-orders count; a **toast** summarises your fills when a round closes; and
+your balance flashes when a trade settles. After each close, every card records
+its **top-of-book spread** (best bid / best offer) so you can see how close you
+were even when nothing traded.
 
 ### Pages
 
@@ -127,7 +141,7 @@ sent over plain HTTP, so run it on a trusted network, not the open internet.
 | `src/api.rs`    | Axum JSON handlers + token auth + SSE endpoint; `api_router()` wires the `/api/*` routes. |
 | `src/main.rs`   | Server bootstrap and routes; serves the embedded player (`/`) and admin (`/admin`) pages. |
 | `static/`       | Vanilla HTML/CSS/JS — `index.html`/`app.js` (player), `admin.html`/`admin.js` (host). |
-| `tests/matching.rs` | Engine tests: crossing, mid price, price priority, partial fills, debt limits, self-trade, order persistence, stale-offer capping, same-price rule, order ledger, round flow. |
+| `tests/matching.rs` | Engine tests: crossing, mid price, price priority, partial fills, debt limits, self-trade, order persistence, stale-offer capping, same-price rule, order ledger, per-round clears, round flow. |
 | `tests/api.rs` | HTTP integration tests: setup/state flow, token auth on orders, committed/available funds, same-price rule, admin-only close & ledger. |
 
 ## HTTP API
