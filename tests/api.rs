@@ -3,14 +3,22 @@
 
 use serde_json::{json, Value};
 
-/// Start the API server on a random port and return its base URL.
-async fn spawn() -> String {
+/// Start the API server on a random port and return its base URL. When
+/// `with_timer` is set, the round auto-close task runs too.
+async fn spawn_opt(with_timer: bool) -> String {
     let state = mtg_auction::app::App::new(None); // no persistence
+    if with_timer {
+        tokio::spawn(mtg_auction::app::timer_loop(state.clone()));
+    }
     let app = mtg_auction::api::api_router().with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
     format!("http://{addr}")
+}
+
+async fn spawn() -> String {
+    spawn_opt(false).await
 }
 
 fn setup_body() -> Value {
@@ -155,6 +163,22 @@ async fn close_is_admin_only_and_advances_round() {
     let r = c.post(format!("{base}/api/close")).header("x-token", &alice).send().await.unwrap();
     assert_eq!(r.status(), 200);
     assert_eq!(get_state(&c, &base, None).await["round"], 2);
+}
+
+#[tokio::test]
+async fn round_auto_closes_when_timer_expires() {
+    let base = spawn_opt(true).await;
+    let c = reqwest::Client::new();
+    // 1-second round timer.
+    let mut body = setup_body();
+    body["round_seconds"] = json!(1);
+    c.post(format!("{base}/api/setup")).json(&body).send().await.unwrap();
+
+    assert_eq!(get_state(&c, &base, None).await["round"], 1);
+    // Wait past the deadline; the background task should close the round.
+    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+    let round = get_state(&c, &base, None).await["round"].as_u64().unwrap();
+    assert!(round >= 2, "round should auto-advance, got {round}");
 }
 
 #[tokio::test]

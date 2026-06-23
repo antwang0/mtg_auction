@@ -34,15 +34,28 @@ impl App {
         let _ = self.tx.send(());
     }
 
-    /// Persist the game to disk (no-op if persistence is disabled).
+    /// Persist the game to disk (no-op if persistence is disabled). Writes to a
+    /// sibling temp file then atomically renames it over the target, so a crash
+    /// mid-write can never corrupt an existing save.
     pub fn save(&self) {
         let Some(path) = &self.state_file else { return };
-        let json = { self.game.lock().unwrap_or_else(|e| e.into_inner()) };
-        let json = serde_json::to_string(&*json);
-        if let Ok(json) = json {
-            if let Err(e) = std::fs::write(path, json) {
-                eprintln!("warning: could not save game to {}: {e}", path.display());
+        let json = match serde_json::to_string(&*self.game.lock().unwrap_or_else(|e| e.into_inner())) {
+            Ok(json) => json,
+            Err(e) => {
+                eprintln!("warning: could not serialize game: {e}");
+                return;
             }
+        };
+        let mut tmp = path.clone();
+        let mut name = tmp.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+        name.push(".tmp");
+        tmp.set_file_name(name);
+        if let Err(e) = std::fs::write(&tmp, json) {
+            eprintln!("warning: could not write {}: {e}", tmp.display());
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            eprintln!("warning: could not replace {}: {e}", path.display());
         }
     }
 

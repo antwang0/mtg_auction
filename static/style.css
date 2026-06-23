@@ -440,4 +440,19 @@ table.grid th[data-sort]::after { content: attr(data-arrow); }
   animation: toastin 0.25s ease-out;
 }
 .toast.out { opacity: 0; transition: opacity 0.4s; }
+.toast.error { border-color: var(--sell); border-left-color: var(--sell); }
 @keyframes toastin { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Live-connection indicator */
+.conn { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.02em; }
+.conn.live { color: var(--buy); }
+.conn.down { color: var(--muted); }
+
+/* Share-link fields on the admin token hand-out */
+.linkfield {
+  width: min(60vw, 360px);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  margin-right: 0.4rem;
+}
+button.copy { padding: 0.35rem 0.6rem; }

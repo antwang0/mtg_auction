@@ -19,6 +19,32 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+const esc = escapeHtml;
+
+function toast(html, kind) {
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " " + kind : "");
+  t.innerHTML = html;
+  $("toasts").appendChild(t);
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 400); }, kind === "error" ? 7000 : 5000);
+}
+function toastError(msg) { toast(esc(msg), "error"); }
+
+function setConn(live) {
+  const el = $("conn");
+  el.className = "conn " + (live ? "live" : "down");
+  el.textContent = live ? "● live" : "● offline";
+  el.title = live ? "Live updates connected" : "Reconnecting…";
+}
+
+function consumeMagicLink() {
+  const params = new URLSearchParams(location.search);
+  const t = params.get("t");
+  if (!t) return;
+  setToken(t);
+  params.delete("t");
+  history.replaceState({}, "", location.pathname + (params.toString() ? "?" + params : ""));
+}
 
 async function api(path, method = "GET", body = null) {
   const opts = { method, headers: {} };
@@ -162,10 +188,22 @@ function showTokens(players) {
   const tb = $("token-table").querySelector("tbody");
   tb.innerHTML = "";
   players.forEach((p) => {
+    // A magic link logs that player in directly (the host link points at /admin).
+    const link = `${location.origin}/${p.admin ? "admin" : ""}?t=${encodeURIComponent(p.token)}`;
     const tr = document.createElement("tr");
-    tr.innerHTML =
-      `<td>${escapeHtml(p.name)}${p.admin ? " (host)" : ""}</td>` +
-      `<td><code>${escapeHtml(p.token)}</code></td>`;
+    tr.innerHTML = `<td>${esc(p.name)}${p.admin ? " (host)" : ""}</td>`;
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+    input.className = "linkfield"; input.readOnly = true; input.value = link;
+    input.onclick = () => input.select();
+    const btn = document.createElement("button");
+    btn.className = "ghost copy"; btn.textContent = "copy link";
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(link); toast("Link copied — share it privately."); }
+      catch { input.select(); toast("Press Ctrl/Cmd-C to copy."); }
+    };
+    td.appendChild(input); td.appendChild(btn);
+    tr.appendChild(td);
     tb.appendChild(tr);
   });
   $("tokens").classList.remove("hidden");
@@ -181,7 +219,7 @@ $("btn-login").onclick = async () => {
     setToken(token);
     $("token-input").value = "";
     await refresh();
-  } catch (e) { alert(e.message); }
+  } catch (e) { toastError(`Login failed: ${e.message}`); }
 };
 
 $("btn-logout").onclick = async () => { setToken(""); await refresh(); };
@@ -209,7 +247,7 @@ $("btn-setup").onclick = async () => {
     showTokens(resp.players);
     await refresh();
   } catch (e) {
-    alert(e.message);
+    toastError(e.message);
   } finally {
     btn.disabled = false;
     btn.textContent = "Open packs & deal";
@@ -229,10 +267,17 @@ $("btn-close").onclick = async () => {
 setInterval(tickTimer, 1000);
 
 // Live updates via SSE, with a slow poll as a safety net.
-try {
-  const es = new EventSource("/api/events");
-  es.onmessage = () => refresh();
-} catch (e) { console.error(e); }
+function connectEvents() {
+  try {
+    const es = new EventSource("/api/events");
+    es.onopen = () => setConn(true);
+    es.onmessage = () => { setConn(true); refresh(); };
+    es.onerror = () => setConn(false);
+  } catch (e) { setConn(false); console.error(e); }
+}
 
+consumeMagicLink();
+setConn(false);
+connectEvents();
 refresh();
 setInterval(refresh, 15000);

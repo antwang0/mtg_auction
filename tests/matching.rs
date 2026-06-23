@@ -226,6 +226,17 @@ fn order_log_records_places_and_cancels() {
 }
 
 #[test]
+fn rejects_absurd_price_and_quantity() {
+    let mut g = controlled_game();
+    let c = card1(&g);
+    // Price and quantity are capped before any affordability check.
+    assert!(g.place_bid(1, c, 1, 1_000_000_000).unwrap_err().contains("too high"));
+    assert!(g.place_bid(1, c, 1_000_000, 1).unwrap_err().contains("too high"));
+    g.players.get_mut(&1).unwrap().add_cards(c, 1);
+    assert!(g.place_offer(1, c, 1, 1_000_000_000).unwrap_err().contains("too high"));
+}
+
+#[test]
 fn cannot_offer_more_than_held() {
     let mut g = controlled_game();
     let c = card1(&g);
@@ -355,6 +366,29 @@ fn match_respects_debt_limit_on_resting_bid() {
     assert_eq!(r.trades.len(), 1);
     assert_eq!(g.players[&1].balance, 5);
     assert!(g.players[&1].balance >= 0);
+}
+
+#[test]
+fn arm_timer_sets_and_clears_deadline() {
+    // No timer configured -> no deadline.
+    let mut g = Game::setup(base_config(), CardPool::sample()).unwrap();
+    g.arm_timer(1000);
+    assert_eq!(g.round_deadline, None);
+
+    // With a timer, the deadline is now + round_seconds while bidding...
+    let mut cfg = base_config();
+    cfg.round_seconds = 30;
+    let mut g = Game::setup(cfg, CardPool::sample()).unwrap();
+    g.arm_timer(1000);
+    assert_eq!(g.round_deadline, Some(1030));
+
+    // ...and clears once the game is finished.
+    for _ in 0..3 {
+        g.close_round().unwrap();
+    }
+    assert_eq!(g.phase, Phase::Finished);
+    g.arm_timer(2000);
+    assert_eq!(g.round_deadline, None);
 }
 
 #[test]

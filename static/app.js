@@ -470,12 +470,32 @@ function toggleWant(name) {
 }
 
 // ---- toasts ----
-function toast(html) {
+function toast(html, kind) {
   const t = document.createElement("div");
-  t.className = "toast";
+  t.className = "toast" + (kind ? " " + kind : "");
   t.innerHTML = html;
   $("toasts").appendChild(t);
-  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 400); }, 6000);
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 400); }, kind === "error" ? 7000 : 6000);
+}
+function toastError(msg) { toast(esc(msg), "error"); }
+
+// ---- live-connection indicator ----
+function setConn(live) {
+  const el = $("conn");
+  if (!el) return;
+  el.className = "conn " + (live ? "live" : "down");
+  el.textContent = live ? "● live" : "● offline";
+  el.title = live ? "Live updates connected" : "Reconnecting…";
+}
+
+// ---- magic-link login: ?t=<token> logs you in, then is stripped from the URL ----
+function consumeMagicLink() {
+  const params = new URLSearchParams(location.search);
+  const t = params.get("t");
+  if (!t) return;
+  setToken(t);
+  params.delete("t");
+  history.replaceState({}, "", location.pathname + (params.toString() ? "?" + params : ""));
 }
 function roundToast(round) {
   const me = state.me;
@@ -531,7 +551,7 @@ $("btn-login").onclick = async () => {
   const token = $("token-input").value.trim();
   if (!token) return;
   try { await api("/api/login", "POST", { token }); setToken(token); $("token-input").value = ""; await refresh(); }
-  catch (e) { alert(e.message); }
+  catch (e) { toastError(`Login failed: ${e.message}`); }
 };
 $("btn-logout").onclick = async () => { setToken(""); await refresh(); };
 
@@ -636,9 +656,16 @@ setInterval(tickTimer, 1000);
 
 // ---- live updates ----
 function connectEvents() {
-  try { const es = new EventSource("/api/events"); es.onmessage = () => refresh(); }
-  catch (e) { console.error(e); }
+  try {
+    const es = new EventSource("/api/events");
+    es.onopen = () => setConn(true);
+    es.onmessage = () => { setConn(true); refresh(); };
+    es.onerror = () => setConn(false); // browser auto-reconnects
+  } catch (e) { setConn(false); console.error(e); }
 }
+
+consumeMagicLink();
+setConn(false);
 connectEvents();
 refresh();
 setInterval(refresh, 15000);

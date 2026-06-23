@@ -50,6 +50,24 @@ impl Rng {
     }
 }
 
+/// Sanity caps on order inputs, to reject absurd values and keep all the
+/// `price * qty` arithmetic comfortably inside `i64`.
+pub const MAX_PRICE: Cents = 100_000_000; // $1,000,000.00 per copy
+pub const MAX_QTY: u32 = 100_000;
+
+fn validate_amounts(qty: u32, price: Cents) -> Result<(), String> {
+    if price < 0 {
+        return Err("price cannot be negative".into());
+    }
+    if price > MAX_PRICE {
+        return Err("price is too high".into());
+    }
+    if qty > MAX_QTY {
+        return Err("quantity is too high".into());
+    }
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Game {
     pub config: Config,
@@ -121,6 +139,22 @@ impl Game {
         }
         if config.debt_limit < 0 {
             return Err("debt limit cannot be negative".into());
+        }
+        if config.starting_money < 0 {
+            return Err("starting money cannot be negative".into());
+        }
+        // Upper bounds so absurd configs can't exhaust memory or overflow money.
+        if config.player_names.len() > 64 {
+            return Err("too many players (max 64)".into());
+        }
+        if config.rounds > 10_000 {
+            return Err("too many rounds (max 10000)".into());
+        }
+        if config.num_packs as u64 * config.pack_size as u64 > 100_000 {
+            return Err("too many cards opened — reduce packs or pack size".into());
+        }
+        if config.starting_money > MAX_PRICE || config.debt_limit > MAX_PRICE {
+            return Err("starting money / debt limit is too large".into());
         }
         if pool.is_empty() {
             return Err("the chosen set has no cards".into());
@@ -285,13 +319,11 @@ impl Game {
             }
             return Ok(());
         }
-        if price < 0 {
-            return Err("price cannot be negative".into());
-        }
+        validate_amounts(qty, price)?;
         if self.offers.get(&key).is_some_and(|o| o.price == price) {
             return Err("your bid and offer on the same card can't be the same price".into());
         }
-        let new_commit = price * qty as i64;
+        let new_commit = price.checked_mul(qty as i64).ok_or("order is too large")?;
         let others = self.committed_bids(player, Some(card));
         let ceiling = p.balance + self.config.debt_limit;
         if others + new_commit > ceiling {
@@ -320,9 +352,7 @@ impl Game {
             }
             return Ok(());
         }
-        if price < 0 {
-            return Err("price cannot be negative".into());
-        }
+        validate_amounts(qty, price)?;
         if qty > p.held(card) {
             return Err(format!("you only hold {} of that card", p.held(card)));
         }

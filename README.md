@@ -16,7 +16,8 @@ STATE_FILE= cargo run           # disable persistence (in-memory only)
 
 The game is **saved to disk** (`game_state.json` by default) on every change and
 **reloaded on startup**, so a session — including who's logged in — survives a
-restart. The browser receives **live updates** over Server-Sent Events, so all
+restart. Saves are written atomically (temp file + rename), so a crash
+mid-write can't corrupt an existing save. The browser receives **live updates** over Server-Sent Events, so all
 players see new orders and round closes immediately (a slow poll is kept as a
 fallback).
 
@@ -25,9 +26,12 @@ limit, rounds, packs) and hits *Open packs & deal* **on the admin page**
 (`/admin`). The first player listed is the host. Setup hands back a **secret
 token** for every player; the host shares each one privately.
 
-Players use the main page (`/`). Paste your token into the login box at the top
-right — your money, holdings and open orders are then private to you, while
-everyone's balances and card counts are public. Submit bids/offers; the host
+Players use the main page (`/`). Log in either by clicking the **share link**
+the host sends you (`/?t=<token>`, which logs you in and strips the token from
+the URL) or by pasting your token into the login box at the top right — your
+money, holdings and open orders are then private to you, while everyone's
+balances and card counts are public. A **live/offline indicator** in the header
+shows whether real-time updates are connected. Submit bids/offers; the host
 runs *Close auction & match orders* on the admin page to settle a round. Both
 pages poll every 2s so one browser tab per player stays in sync.
 
@@ -115,6 +119,9 @@ prices so everything works offline.
   and a buyer is never pushed past their debt limit — so a balance can never
   drop below `-debt_limit` no matter how the books fill.
 - **End.** After `rounds` closes the game is finished.
+- **Limits.** Order price/quantity and the setup configuration are bounded
+  (e.g. price ≤ $1,000,000, ≤ 100k copies, ≤ 100k cards opened) so absurd
+  inputs can't overflow the money arithmetic or exhaust memory.
 
 ## Auth
 
@@ -122,6 +129,9 @@ Auth is token-based and intentionally simple.
 
 - Setup generates one unguessable token per player (independent of the game
   seed). They're returned to the host to distribute.
+- The host hands out one **magic link** per player (`/?t=<token>`, or
+  `/admin?t=<token>` for themselves) — opening it logs that player in and clears
+  the token from the address bar.
 - A request acts as a player by sending its token in the `X-Token` header.
 - The first player (the host) is the admin: only their token may **close
   rounds** or **start a new game** over an in-progress one. Players may only
@@ -142,7 +152,9 @@ sent over plain HTTP, so run it on a trusted network, not the open internet.
 | `src/main.rs`   | Server bootstrap and routes; serves the embedded player (`/`) and admin (`/admin`) pages. |
 | `static/`       | Vanilla HTML/CSS/JS — `index.html`/`app.js` (player), `admin.html`/`admin.js` (host). |
 | `tests/matching.rs` | Engine tests: crossing, mid price, price priority, partial fills, debt limits, self-trade, order persistence, stale-offer capping, same-price rule, order ledger, per-round clears, round flow. |
-| `tests/api.rs` | HTTP integration tests: setup/state flow, token auth on orders, committed/available funds, same-price rule, admin-only close & ledger. |
+| `tests/api.rs` | HTTP integration tests: setup/state flow, token auth on orders, committed/available funds, same-price rule, admin-only close & ledger, timer auto-close. |
+| `tests/persistence.rs` | Save → reload round-trip preserves phase, round, resting orders and tokens. |
+| `tests/properties.rs` | Property tests (proptest): random order/close sequences preserve money & card conservation, the debt-limit floor, and non-negative holdings. |
 
 ## HTTP API
 
