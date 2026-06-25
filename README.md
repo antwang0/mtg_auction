@@ -295,7 +295,7 @@ network, not the open internet.
 | `POST /api/password-login` | – | `{name, password}` | Log in by name + password; returns `{player, name, admin, token}` (401 if wrong). |
 | `POST /api/set-password` | player token | `{password}` | Set/change your own login password. |
 | `POST /api/setup` | host token (only if a game exists) | `Config` (`pool_source` selects `sample`/`scryfall`/`manual`) | Start a new game; opens the chosen pool and returns each player's token. |
-| `GET /api/set-cards?set=<code>` | open before a game, host-only once one's running | – | A set's cards (`{name, rarity, ref_price}`, sorted) for the manual-list picker. `sample` works offline. |
+| `GET /api/set-cards?set=<code>` | open before a game, host-only once one's running | – | A set's cards (`{name, rarity, ref_price, colors}`, sorted) for the manual-list picker, which can search by name and filter by colour. `colors` is a canonical `WUBRG` string (empty = colorless). `sample` works offline. |
 | `POST /api/bid`   | player token | `{player, card, qty, price}` | Place/replace/cancel a bid. |
 | `POST /api/offer` | player token | `{player, card, qty, price}` | Place/replace/cancel an offer. |
 | `POST /api/close` | host token | – | Match the current round and advance. |
