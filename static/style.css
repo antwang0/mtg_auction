@@ -116,6 +116,13 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(240, 185, 11, 0.18);
 }
+.seed-row { display: flex; gap: 0.4rem; align-items: stretch; }
+.seed-row input { margin-top: 0.25rem; }
+.seed-row button { margin-top: 0.25rem; flex: 0 0 auto; padding: 0.4rem 0.6rem; }
+.adv-fieldset { margin: 0 0 1rem; }
+.adv-fieldset > summary { cursor: pointer; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.6rem; }
+.adv-fieldset fieldset { margin-bottom: 0; }
+.setup-warn { color: var(--accent); font-size: 0.85rem; margin: 0 0 0.7rem; }
 .cardlist-field { margin-bottom: 1rem; }
 .cardlist-field textarea { resize: vertical; line-height: 1.4; }
 fieldset { border: 1px solid var(--line); border-radius: 4px; padding: 0.7rem 0.9rem; margin: 0 0 1rem; }

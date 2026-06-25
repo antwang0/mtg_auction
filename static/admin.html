@@ -43,8 +43,11 @@
         <label>Round timer (s, 0 = manual)
           <input id="cfg-timer" type="number" value="0" min="0" />
         </label>
-        <label>Seed
-          <input id="cfg-seed" type="number" value="42" />
+        <label>Seed <span class="muted">(reproducibility)</span>
+          <span class="seed-row">
+            <input id="cfg-seed" type="number" value="42" min="0" />
+            <button id="btn-seed-rand" type="button" class="ghost" title="Randomize seed">🎲</button>
+          </span>
         </label>
       </div>
 
@@ -107,6 +110,21 @@
         </div>
       </fieldset>
 
+      <details class="adv-fieldset">
+        <summary>ELO ladder settings <span class="muted">(optional — sensible defaults)</span></summary>
+        <fieldset>
+          <legend>Ladder (post-draft ELO play)</legend>
+          <div class="grid-form">
+            <label>Starting ELO <input id="cfg-elo-start" type="number" value="1200" min="0" max="100000" /></label>
+            <label>K-factor <span class="muted">(max swing)</span> <input id="cfg-elo-k" type="number" value="32" min="1" max="1000" /></label>
+            <label>Cancel penalty <input id="cfg-elo-cancel" type="number" value="16" min="0" max="1000" /></label>
+            <label>Max games / week <input id="cfg-elo-maxgames" type="number" value="5" min="1" max="50" /></label>
+            <label>Schedule window (days) <input id="cfg-elo-window" type="number" value="14" min="1" max="60" /></label>
+          </div>
+        </fieldset>
+      </details>
+
+      <p id="setup-warn" class="setup-warn hidden">⚠ A game is in progress. Starting a new one <strong>replaces it</strong> and invalidates every player's current token.</p>
       <button id="btn-setup" class="primary">Open packs &amp; deal</button>
       <p class="muted">The first player listed is the host. Scryfall sets are pulled by code from <a href="https://scryfall.com/sets" target="_blank" rel="noopener">Scryfall</a> (e.g. <code>dom</code>, <code>mh3</code>); the card list deals exactly those cards. Resetting a game in progress requires the current host token.</p>
     </section>

@@ -96,6 +96,9 @@ function render() {
     $("status").textContent = `${state.set_name} — round ${state.round} of ${state.total_rounds}`;
   }
 
+  // Warn that running setup again replaces the live game (see btn-setup).
+  $("setup-warn").classList.toggle("hidden", !inGame);
+
   // Auth bar
   $("auth").classList.remove("hidden");
   const me = state.me != null ? state.players.find((p) => p.id === state.me) : null;
@@ -353,6 +356,13 @@ function syncPoolPanes() {
 document.querySelectorAll('input[name="pool"]').forEach((r) => (r.onchange = syncPoolPanes));
 syncPoolPanes();
 
+// Roll a fresh seed (any non-negative integer reproduces a distinct deal).
+$("btn-seed-rand").onclick = () => {
+  $("cfg-seed").value = (typeof crypto !== "undefined" && crypto.getRandomValues)
+    ? crypto.getRandomValues(new Uint32Array(1))[0]
+    : Math.floor(Math.random() * 0xffffffff);
+};
+
 // ---- card picker: build the manual list from a set's card list ----
 let pickerCards = [];
 
@@ -437,10 +447,23 @@ function addToCardList(additions) {
 }
 
 $("btn-setup").onclick = async () => {
+  const pool = selectedPool();
+  // A blank Scryfall code used to fall back to the sample set silently; make
+  // the host fix it instead of quietly drafting a different pool.
+  if (pool === "scryfall" && !$("cfg-set").value.trim()) {
+    toastError("Enter a Scryfall set code (e.g. dom), or pick another card pool source.");
+    $("cfg-set").focus();
+    return;
+  }
+  // Running setup on a live game wipes it (players, holdings, orders, tokens).
+  if (state && state.phase !== "setup" &&
+      !confirm("Start a new game? This replaces the game in progress and invalidates every player's current token.")) {
+    return;
+  }
   const names = $("cfg-players").value.split(",").map((s) => s.trim()).filter(Boolean);
   const config = {
     player_names: names,
-    pool_source: selectedPool(),
+    pool_source: pool,
     set: $("cfg-set").value.trim() || "sample",
     card_list: $("cfg-cardlist").value,
     starting_money: toCents($("cfg-money").value),
@@ -456,6 +479,11 @@ $("btn-setup").onclick = async () => {
     deal_mythics: Number($("cfg-deal-m").value) || 0,
     house_offer_stdev_pct: Number($("cfg-house-stdev").value) || 0,
     house_offer_cap_pct: Number($("cfg-house-cap").value) || 0,
+    starting_elo: Number($("cfg-elo-start").value),
+    elo_k: Number($("cfg-elo-k").value),
+    cancel_penalty: Number($("cfg-elo-cancel").value),
+    max_games_per_week: Number($("cfg-elo-maxgames").value),
+    schedule_window_days: Number($("cfg-elo-window").value),
   };
   const btn = $("btn-setup");
   btn.disabled = true;
