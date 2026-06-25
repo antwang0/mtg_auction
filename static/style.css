@@ -116,6 +116,13 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(240, 185, 11, 0.18);
 }
+.players-label { margin-bottom: 0.4rem; }
+.players-list { margin-bottom: 0.5rem; }
+.player-row { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
+.player-row .player-name { margin-top: 0; flex: 1 1 auto; }
+.player-row .host-tag { flex: 0 0 auto; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bg, #1a1a1a); background: var(--accent); border-radius: 3px; padding: 0.12rem 0.35rem; }
+.player-row .player-del { flex: 0 0 auto; padding: 0.3rem 0.55rem; line-height: 1; }
+.add-player-btn { margin-bottom: 1rem; }
 .seed-row { display: flex; gap: 0.4rem; align-items: stretch; }
 .seed-row input { margin-top: 0.25rem; }
 .seed-row button { margin-top: 0.25rem; flex: 0 0 auto; padding: 0.4rem 0.6rem; }

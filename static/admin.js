@@ -333,12 +333,49 @@ function syncPoolPanes() {
 document.querySelectorAll('input[name="pool"]').forEach((r) => (r.onchange = syncPoolPanes));
 syncPoolPanes();
 
+// ---- player list: one input per player (first is the host) ----
+function playerNames() {
+  return Array.from($("players-list").querySelectorAll(".player-name")).map((i) => i.value.trim()).filter(Boolean);
+}
+// Tag the first row "host"; clear the tag from any others.
+function markHostRow() {
+  Array.from($("players-list").children).forEach((row, i) => {
+    let tag = row.querySelector(".host-tag");
+    if (i === 0 && !tag) { tag = document.createElement("span"); tag.className = "host-tag"; tag.textContent = "host"; row.insertBefore(tag, row.firstChild); }
+    else if (i !== 0 && tag) tag.remove();
+  });
+}
+function addPlayerRow(name = "", focus = false) {
+  const row = document.createElement("div");
+  row.className = "player-row";
+  const input = document.createElement("input");
+  input.type = "text"; input.className = "player-name"; input.value = name;
+  input.placeholder = "player name"; input.autocomplete = "off";
+  // Enter adds (and jumps to) the next row, so a host can rattle off names.
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addPlayerRow("", true); } });
+  const del = document.createElement("button");
+  del.type = "button"; del.className = "ghost player-del"; del.title = "remove player"; del.textContent = "×";
+  del.addEventListener("click", () => {
+    if ($("players-list").children.length <= 1) { input.value = ""; }  // keep at least one field
+    else row.remove();
+    markHostRow(); setupPreview();
+  });
+  row.append(input, del);
+  $("players-list").appendChild(row);
+  markHostRow();
+  if (focus) input.focus();
+  setupPreview();
+  return input;
+}
+$("btn-add-player-row").onclick = () => addPlayerRow("", true);
+["Alice", "Bob", "Carol", "Dave"].forEach((n) => addPlayerRow(n));
+
 // Live setup preview + inline validation. Recomputes a one-line summary of what
 // "Open packs & deal" will do, and blocks submit (with the reason) while the
 // form has a problem the server would reject anyway.
 function setupPreview() {
   const pool = selectedPool();
-  const names = $("cfg-players").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const names = playerNames();
   const rounds = Number($("cfg-rounds").value);
   const problems = [];
 
@@ -492,7 +529,7 @@ $("btn-setup").onclick = async () => {
       !confirm("Start a new game? This replaces the game in progress and invalidates every player's current token.")) {
     return;
   }
-  const names = $("cfg-players").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const names = playerNames();
   const config = {
     player_names: names,
     pool_source: pool,

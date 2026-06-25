@@ -27,10 +27,11 @@
   <main>
     <section id="setup" class="card">
       <h2>New Game</h2>
+      <label class="players-label">Players <span class="muted">(first listed is the host)</span></label>
+      <div id="players-list" class="players-list"></div>
+      <button id="btn-add-player-row" type="button" class="ghost add-player-btn">+ Add player</button>
+
       <div class="grid-form">
-        <label>Players (comma separated)
-          <input id="cfg-players" type="text" value="Alice, Bob, Carol, Dave" />
-        </label>
         <label>Starting money ($)
           <input id="cfg-money" type="number" step="0.01" min="0" value="100.00" />
         </label>
