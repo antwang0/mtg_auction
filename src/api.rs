@@ -471,6 +471,9 @@ pub struct SetCard {
     name: String,
     rarity: Rarity,
     ref_price: Option<Cents>,
+    /// Canonical `WUBRG`-ordered colour string (empty = colorless), for the
+    /// picker's colour filter.
+    colors: String,
 }
 
 #[derive(Serialize)]
@@ -497,7 +500,7 @@ pub async fn get_set_cards(State(state): State<AppState>, headers: HeaderMap, Qu
         .chain(&pool.uncommons)
         .chain(&pool.rares)
         .chain(&pool.mythics)
-        .map(|pc| SetCard { name: pc.name.clone(), rarity: pc.rarity, ref_price: pc.ref_price })
+        .map(|pc| SetCard { name: pc.name.clone(), rarity: pc.rarity, ref_price: pc.ref_price, colors: pc.colors.clone() })
         .collect();
     cards.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(SetCardsResponse { set_name: pool.set_name, cards }))

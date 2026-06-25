@@ -148,6 +148,7 @@ fn make_manual_pool(rows: &[(u32, &str)]) -> CardPool {
                     type_line: None,
                     cmc: None,
                     mana_cost: None,
+                    colors: String::new(),
                 },
                 *q,
             )

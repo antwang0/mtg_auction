@@ -428,6 +428,7 @@ fn manual_pool_deals_exactly_the_listed_cards() {
         type_line: None,
         cmc: None,
         mana_cost: None,
+        colors: String::new(),
     };
     let pool = CardPool {
         set_name: "Custom list".into(),

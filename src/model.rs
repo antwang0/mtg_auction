@@ -51,6 +51,9 @@ pub struct PoolCard {
     pub type_line: Option<String>,
     pub cmc: Option<f64>,
     pub mana_cost: Option<String>,
+    /// The card's colors as a canonical `WUBRG`-ordered string (empty =
+    /// colorless), e.g. `"WU"`. Used for the card-pool picker's colour filter.
+    pub colors: String,
 }
 
 /// The set of cards a game draws its packs from.
@@ -95,12 +98,22 @@ impl CardPool {
                 "Creature — Warrior", "Instant", "Sorcery", "Artifact",
                 "Enchantment", "Creature — Beast", "Land", "Creature — Wizard",
             ];
+            // Rotate a spread of mono-, multi- and colorless cards so the
+            // picker's colour filter is exercisable offline too.
+            const COLORS: &[&str] = &["W", "U", "B", "R", "G", "WU", "BR", "GW", "WUB", "RG"];
             names
                 .iter()
                 .enumerate()
                 .map(|(i, n)| {
                     let type_line = TYPES[(i + rarity as usize) % TYPES.len()];
                     let cmc = if type_line.contains("Land") { 0.0 } else { ((n.len() % 6) + 1) as f64 };
+                    // Lands and artifacts read as colorless; everything else
+                    // cycles through the colour combos.
+                    let colors = if type_line.contains("Land") || type_line.contains("Artifact") {
+                        String::new()
+                    } else {
+                        COLORS[(i + rarity as usize) % COLORS.len()].to_string()
+                    };
                     PoolCard {
                         name: (*n).to_string(),
                         rarity,
@@ -109,6 +122,7 @@ impl CardPool {
                         type_line: Some(type_line.to_string()),
                         cmc: Some(cmc),
                         mana_cost: None,
+                        colors,
                     }
                 })
                 .collect()

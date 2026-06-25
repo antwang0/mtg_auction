@@ -5,7 +5,7 @@
 
 use crate::model::{CardPool, PoolCard, Rarity};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -61,6 +61,7 @@ pub async fn fetch_decklist_pool(text: &str) -> Result<CardPool, String> {
                 type_line: None,
                 cmc: None,
                 mana_cost: None,
+                colors: String::new(),
             });
             (card, qty)
         })
@@ -163,6 +164,11 @@ struct ScryCard {
     cmc: Option<f64>,
     #[serde(default)]
     mana_cost: Option<String>,
+    /// Scryfall's authoritative colour array, e.g. `["W","U"]`; `Some([])` means
+    /// genuinely colorless (e.g. Devoid). Absent on some multi-face cards, in
+    /// which case we fall back to scanning the mana cost.
+    #[serde(default)]
+    colors: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -236,7 +242,7 @@ fn build_client() -> Result<reqwest::Client, String> {
 /// Convert a raw Scryfall card into a [`PoolCard`], picking the best image
 /// (front face for double-faced cards) and parsing its USD price into cents.
 fn pool_card_from(card: ScryCard) -> PoolCard {
-    let ScryCard { name, rarity, image_uris, card_faces, prices, type_line, cmc, mana_cost, .. } = card;
+    let ScryCard { name, rarity, image_uris, card_faces, prices, type_line, cmc, mana_cost, colors, .. } = card;
     let image = image_uris.and_then(ImageUris::best).or_else(|| {
         card_faces
             .and_then(|faces| faces.into_iter().next())
@@ -245,7 +251,35 @@ fn pool_card_from(card: ScryCard) -> PoolCard {
     });
     let ref_price = prices.and_then(|p| p.usd).as_deref().and_then(parse_price_cents);
     let mana_cost = mana_cost.filter(|s| !s.is_empty());
-    PoolCard { name, rarity: rarity_from(&rarity), image, ref_price, type_line, cmc, mana_cost }
+    let colors = canonical_colors(colors, mana_cost.as_deref());
+    PoolCard { name, rarity: rarity_from(&rarity), image, ref_price, type_line, cmc, mana_cost, colors }
+}
+
+/// Normalise a card's colours to a canonical `WUBRG`-ordered string (empty =
+/// colorless). Uses Scryfall's authoritative `colors` when present — including
+/// `Some([])` for genuinely colorless cards like Devoid — and only falls back
+/// to scanning the mana cost when the field is absent (some multi-face cards).
+fn canonical_colors(colors: Option<Vec<String>>, mana_cost: Option<&str>) -> String {
+    let mut set: HashSet<char> = HashSet::new();
+    match colors {
+        Some(cs) => {
+            for c in cs {
+                if let Some(ch) = c.chars().next() {
+                    set.insert(ch.to_ascii_uppercase());
+                }
+            }
+        }
+        None => {
+            if let Some(mc) = mana_cost {
+                for ch in ['W', 'U', 'B', 'R', 'G'] {
+                    if mc.contains(ch) {
+                        set.insert(ch);
+                    }
+                }
+            }
+        }
+    }
+    "WUBRG".chars().filter(|c| set.contains(c)).collect()
 }
 
 async fn fetch_scryfall(code: &str) -> Result<CardPool, String> {
@@ -311,7 +345,32 @@ async fn fetch_scryfall(code: &str) -> Result<CardPool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_decklist, parse_price_cents};
+    use super::{canonical_colors, parse_decklist, parse_price_cents};
+
+    fn cv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn colors_canonicalise_to_wubrg_order() {
+        // Scryfall's order is normalised, lowercase tolerated.
+        assert_eq!(canonical_colors(Some(cv(&["U", "W"])), None), "WU");
+        assert_eq!(canonical_colors(Some(cv(&["g", "r", "w"])), None), "WRG");
+        assert_eq!(canonical_colors(Some(cv(&["W"])), None), "W");
+    }
+
+    #[test]
+    fn explicit_empty_colors_is_colorless_even_with_coloured_pips() {
+        // Devoid: Scryfall reports colors=[] though the cost has coloured pips.
+        assert_eq!(canonical_colors(Some(vec![]), Some("{2}{B}")), "");
+    }
+
+    #[test]
+    fn falls_back_to_mana_cost_only_when_colors_absent() {
+        assert_eq!(canonical_colors(None, Some("{1}{W}{U}")), "WU");
+        assert_eq!(canonical_colors(None, Some("{3}")), ""); // colorless cost
+        assert_eq!(canonical_colors(None, None), "");
+    }
 
     #[test]
     fn parses_quantities_and_names() {

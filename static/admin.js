@@ -456,9 +456,35 @@ $("btn-load-set").onclick = async () => {
   }
 };
 
+// The active colour facets: selected WUBRG letters plus the colorless/multi
+// toggles. A card matches if it satisfies ANY active facet (so e.g. W + Multi
+// shows white cards and multicolour cards).
+function activeColorFilter() {
+  const on = Array.from($("picker-colors").querySelectorAll(".cbtn.active"));
+  return {
+    colors: on.filter((b) => b.dataset.color).map((b) => b.dataset.color),
+    colorless: on.some((b) => b.dataset.facet === "colorless"),
+    multi: on.some((b) => b.dataset.facet === "multi"),
+  };
+}
+function matchesColors(card, f) {
+  if (!f.colors.length && !f.colorless && !f.multi) return true; // no filter
+  const cc = card.colors || "";
+  if (f.colors.some((col) => cc.includes(col))) return true;
+  if (f.colorless && cc === "") return true;
+  if (f.multi && cc.length >= 2) return true;
+  return false;
+}
+// Little coloured pips for a card's colours ("" = a single colorless pip).
+function colorPips(colors) {
+  if (!colors) return `<span class="pip pip-C" title="Colorless">C</span>`;
+  return colors.split("").map((c) => `<span class="pip pip-${c}" title="${c}">${c}</span>`).join("");
+}
+
 function shownPickerCards() {
   const q = $("picker-filter").value.trim().toLowerCase();
-  return q ? pickerCards.filter((c) => c.name.toLowerCase().includes(q)) : pickerCards;
+  const f = activeColorFilter();
+  return pickerCards.filter((c) => (!q || c.name.toLowerCase().includes(q)) && matchesColors(c, f));
 }
 
 function renderPicker() {
@@ -473,6 +499,7 @@ function renderPicker() {
       `<input type="number" class="picker-qty" min="1" value="1" title="quantity" />` +
       `<button type="button" class="picker-add" title="add to list">+</button>` +
       `<span class="picker-name">${esc(c.name)}</span>` +
+      `<span class="picker-colorcell">${colorPips(c.colors)}</span>` +
       `<span class="picker-rarity rarity-${c.rarity}">${c.rarity[0].toUpperCase()}</span>` +
       `<span class="picker-ref muted">${c.ref_price != null ? fmtUSD(c.ref_price) : "—"}</span>`;
     row.querySelector(".picker-add").onclick = () => {
@@ -484,6 +511,14 @@ function renderPicker() {
 }
 
 $("picker-filter").oninput = renderPicker;
+// Toggle colour facets (the ✕ clears them all), then re-render.
+$("picker-colors").addEventListener("click", (e) => {
+  const b = e.target.closest(".cbtn");
+  if (!b) return;
+  if (b.dataset.facet === "clear") $("picker-colors").querySelectorAll(".cbtn.active").forEach((x) => x.classList.remove("active"));
+  else b.classList.toggle("active");
+  renderPicker();
+});
 $("btn-add-all").onclick = () => addToCardList(shownPickerCards().map((c) => ({ name: c.name, qty: 1 })));
 
 // Parse the textarea into ordered {qty,name} card rows (ignoring comments/blanks).
