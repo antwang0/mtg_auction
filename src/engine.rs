@@ -700,11 +700,17 @@ impl Game {
 
     /// Intern a pool card into the catalog by name, returning its id (creating a
     /// new `Card` if the name is new). Keeps the display order sorted by name.
-    fn intern_card(&mut self, pc: &PoolCard) -> CardId {
-        if let Some(c) = self.cards.values().find(|c| c.name == pc.name) {
-            return c.id;
+    ///
+    /// `by_name` is a name→id index over the existing catalog, consulted and
+    /// updated in place so a whole batch interns in O(n) rather than rescanning
+    /// the catalog (and re-sorting `card_order`) per card.
+    fn intern_card(&mut self, pc: &PoolCard, by_name: &mut HashMap<String, CardId>) -> CardId {
+        if let Some(&id) = by_name.get(&pc.name) {
+            return id;
         }
-        let id = self.cards.keys().copied().max().unwrap_or(0) + 1;
+        // Cards are never removed, so ids stay dense (1..=len) and the next id is
+        // simply the current count + 1 — no need to scan the keys for the max.
+        let id = self.cards.len() as CardId + 1;
         self.cards.insert(id, Card {
             id,
             name: pc.name.clone(),
@@ -715,10 +721,11 @@ impl Game {
             cmc: pc.cmc,
             mana_cost: pc.mana_cost.clone(),
         });
-        self.card_order.push(id);
-        let mut order = std::mem::take(&mut self.card_order);
-        order.sort_by(|a, b| self.cards[a].name.cmp(&self.cards[b].name));
-        self.card_order = order;
+        // Insert into the already-sorted display order at its place by name,
+        // instead of re-sorting the whole vector on every add.
+        let pos = self.card_order.partition_point(|c| self.cards[c].name <= pc.name);
+        self.card_order.insert(pos, id);
+        by_name.insert(pc.name.clone(), id);
         id
     }
 
@@ -736,12 +743,16 @@ impl Game {
         if total > 100_000 {
             return Err("too many cards in the list — reduce the quantities".into());
         }
+        // Build a name→id index over the current catalog once, then intern the
+        // whole batch against it (kept up to date as new names are added).
+        let mut by_name: HashMap<String, CardId> =
+            self.cards.values().map(|c| (c.name.clone(), c.id)).collect();
         let mut added = 0usize;
         for (pc, qty) in list {
             if qty == 0 {
                 continue;
             }
-            let id = self.intern_card(&pc);
+            let id = self.intern_card(&pc, &mut by_name);
             self.house.add_cards(id, qty);
             added += qty as usize;
         }

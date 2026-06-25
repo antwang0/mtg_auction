@@ -1,6 +1,6 @@
 "use strict";
 
-const TOKEN_KEY = "mtg_auction_token";
+// TOKEN_KEY, $, $$, fmtUSD, toCents, escapeHtml/esc come from util.js (loaded first).
 const WANTS_KEY = "mtg_auction_wants";
 const UI_KEY = "mtg_auction_ui";
 
@@ -23,33 +23,13 @@ let ladder = null;
 let availSet = new Set();   // slot ids I've toggled on (edit buffer)
 let availDirty = false;     // unsaved availability edits pending
 
-const $ = (id) => document.getElementById(id);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const RARITY_RANK = { common: 0, uncommon: 1, rare: 2, mythic: 3 };
 const RARITIES = ["common", "uncommon", "rare", "mythic"];
 const KNOWN_TYPES = ["Creature", "Planeswalker", "Instant", "Sorcery", "Artifact", "Enchantment", "Land", "Battle", "Kindred"];
 
-// ---- helpers ----
-function fmtUSD(cents) {
-  if (cents === null || cents === undefined) return "—";
-  const neg = cents < 0, v = Math.abs(cents);
-  return (neg ? "-$" : "$") + Math.floor(v / 100) + "." + String(v % 100).padStart(2, "0");
-}
-// Parse a dollar string into integer cents without going through a binary
-// float, so e.g. "1.005" rounds to 101, not 100. Invalid input yields 0.
-function toCents(d) {
-  const m = String(d).trim().match(/^(\d*)(?:\.(\d*))?$/);
-  if (!m || (!m[1] && !m[2])) return 0;
-  const frac = (m[2] || "").padEnd(2, "0");
-  const round = (m[2] || "").charCodeAt(2) >= 53 ? 1 : 0; // 3rd digit ≥ "5"
-  return (m[1] ? parseInt(m[1], 10) : 0) * 100 + parseInt(frac.slice(0, 2), 10) + round;
-}
+// ---- helpers ---- (fmtUSD, toCents, escapeHtml/esc are in util.js)
 function fmtMV(cmc) { return cmc === null || cmc === undefined ? "—" : String(cmc); }
 function shortType(tl) { if (!tl) return "—"; const i = tl.indexOf("—"); return (i >= 0 ? tl.slice(0, i) : tl).trim(); }
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-const esc = escapeHtml;
 function mineOf(c) { return myQty[c.id] || 0; }
 function loadWants() { try { return new Set(JSON.parse(localStorage.getItem(WANTS_KEY) || "[]")); } catch { return new Set(); } }
 function saveWants() { localStorage.setItem(WANTS_KEY, JSON.stringify([...wants])); }
@@ -928,18 +908,6 @@ function tickTimer() {
 }
 setInterval(tickTimer, 1000);
 
-// ---- live updates ----
-function connectEvents() {
-  try {
-    const es = new EventSource("/api/events");
-    es.onopen = () => setConn(true);
-    es.onmessage = () => { setConn(true); refresh(); };
-    es.onerror = () => setConn(false); // browser auto-reconnects
-  } catch (e) { setConn(false); console.error(e); }
-}
-
+// ---- live updates ---- (SSE + adaptive poll fallback live in util.js)
 consumeMagicLink();
-setConn(false);
-connectEvents();
-refresh();
-setInterval(refresh, 15000);
+startLiveUpdates({ refresh, setConn });

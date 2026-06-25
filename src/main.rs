@@ -9,6 +9,7 @@ use mtg_auction::{api, app};
 use std::path::PathBuf;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
+const UTIL_JS: &str = include_str!("../static/util.js");
 const APP_JS: &str = include_str!("../static/app.js");
 const STYLE_CSS: &str = include_str!("../static/style.css");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
@@ -24,6 +25,10 @@ async fn admin() -> Html<&'static str> {
 
 fn js(body: &'static str) -> impl IntoResponse {
     ([(axum::http::header::CONTENT_TYPE, "application/javascript")], body)
+}
+
+async fn util_js() -> impl IntoResponse {
+    js(UTIL_JS)
 }
 
 async fn app_js() -> impl IntoResponse {
@@ -55,6 +60,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index))
         .route("/admin", get(admin))
+        .route("/util.js", get(util_js))
         .route("/app.js", get(app_js))
         .route("/admin.js", get(admin_js))
         .route("/style.css", get(style_css))
