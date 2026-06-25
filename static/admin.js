@@ -333,6 +333,60 @@ function syncPoolPanes() {
 document.querySelectorAll('input[name="pool"]').forEach((r) => (r.onchange = syncPoolPanes));
 syncPoolPanes();
 
+// Live setup preview + inline validation. Recomputes a one-line summary of what
+// "Open packs & deal" will do, and blocks submit (with the reason) while the
+// form has a problem the server would reject anyway.
+function setupPreview() {
+  const pool = selectedPool();
+  const names = $("cfg-players").value.split(",").map((s) => s.trim()).filter(Boolean);
+  const rounds = Number($("cfg-rounds").value);
+  const problems = [];
+
+  if (names.length < 2) problems.push("add at least 2 players");
+  if (new Set(names.map((n) => n.toLowerCase())).size !== names.length) problems.push("player names must be unique");
+  if (!(rounds >= 1)) problems.push("need at least 1 round");
+
+  let opened = null, openedLabel = "opened";
+  if (pool === "manual") {
+    opened = parseCardList($("cfg-cardlist").value).reduce((s, r) => s + (r.qty > 0 ? r.qty : 0), 0);
+    openedLabel = "listed";
+    if (opened === 0) problems.push("paste a card list (one “qty name” per line)");
+  } else {
+    if (pool === "scryfall" && !$("cfg-set").value.trim()) problems.push("enter a Scryfall set code");
+    const packs = Number($("cfg-packs").value), size = Number($("cfg-packsize").value);
+    if (packs >= 1 && size >= 1) opened = packs * size;
+    else problems.push("packs and cards per pack must be ≥ 1");
+  }
+
+  const deals = ["c", "u", "r", "m"].map((k) => Number($("cfg-deal-" + k).value) || 0);
+  const perPlayer = deals.reduce((a, b) => a + b, 0);
+
+  let summary = "";
+  if (opened != null && names.length) {
+    summary = `${names.length} player${names.length === 1 ? "" : "s"} · ${opened} card${opened === 1 ? "" : "s"} ${openedLabel}`;
+    summary += perPlayer === 0
+      ? " · dealt round-robin (nothing held to the house)"
+      : ` · dealing up to ${deals.join("/")} per player (≤${perPlayer} each) → leftovers to the house`;
+  }
+
+  const el = $("setup-preview"), btn = $("btn-setup");
+  if (problems.length) {
+    el.textContent = "Can’t start yet — " + problems.join("; ") + ".";
+    el.classList.add("bad");
+    btn.disabled = true;
+  } else {
+    el.textContent = summary;
+    el.classList.remove("bad");
+    btn.disabled = false;
+  }
+}
+
+// Recompute on any edit within the setup form (covers typing, number steppers,
+// and the pool radios); also after programmatic card-list edits below.
+$("setup").addEventListener("input", setupPreview);
+$("setup").addEventListener("change", setupPreview);
+setupPreview();
+
 // Roll a fresh seed (any non-negative integer reproduces a distinct deal).
 $("btn-seed-rand").onclick = () => {
   $("cfg-seed").value = (typeof crypto !== "undefined" && crypto.getRandomValues)
@@ -421,6 +475,7 @@ function addToCardList(additions) {
   $("cfg-cardlist").value = rows.filter((r) => r.qty > 0).map((r) => `${r.qty} ${r.name}`).join("\n");
   const manual = document.querySelector('input[name="pool"][value="manual"]');
   if (manual && !manual.checked) { manual.checked = true; syncPoolPanes(); }
+  setupPreview(); // programmatic edits don't fire the form's input listener
 }
 
 $("btn-setup").onclick = async () => {
@@ -474,8 +529,8 @@ $("btn-setup").onclick = async () => {
   } catch (e) {
     toastError(e.message);
   } finally {
-    btn.disabled = false;
     btn.textContent = "Open packs & deal";
+    setupPreview(); // re-enable only if the form is still valid
   }
 };
 

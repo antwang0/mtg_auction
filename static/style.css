@@ -123,6 +123,8 @@ input:focus, select:focus, textarea:focus {
 .adv-fieldset > summary { cursor: pointer; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.6rem; }
 .adv-fieldset fieldset { margin-bottom: 0; }
 .setup-warn { color: var(--accent); font-size: 0.85rem; margin: 0 0 0.7rem; }
+.setup-preview { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.7rem; min-height: 1em; }
+.setup-preview.bad { color: var(--sell); }
 .cardlist-field { margin-bottom: 1rem; }
 .cardlist-field textarea { resize: vertical; line-height: 1.4; }
 fieldset { border: 1px solid var(--line); border-radius: 4px; padding: 0.7rem 0.9rem; margin: 0 0 1rem; }
