@@ -1,0 +1,33 @@
+# Caddy reverse proxy for the Draft Auction House.
+#
+# Caddy terminates TLS (automatic Let's Encrypt certs + auto-renewal) and
+# forwards plain HTTP to the Rust app, which keeps listening on localhost.
+#
+# The site address comes from $SITE_ADDRESS and defaults to `localhost`:
+#
+#   Local:   caddy run --config ./Caddyfile
+#            -> serves https://localhost with a local (self-signed) cert
+#   Server:  SITE_ADDRESS=auction.example.com caddy run --config ./Caddyfile
+#            -> obtains + auto-renews a real Let's Encrypt cert for the domain
+#
+# On the server the domain's DNS A/AAAA record must point at the machine and
+# ports 80 + 443 must be reachable. In both cases run the app on loopback first:
+#
+#   BIND=127.0.0.1:8787 cargo run --release
+
+{$SITE_ADDRESS:localhost} {
+	# Server-Sent Events: the app streams live updates over /api/events, a
+	# long-lived response. Disable proxy buffering so events reach the browser
+	# immediately and the stream isn't prematurely timed out.
+	handle /api/events* {
+		reverse_proxy 127.0.0.1:8787 {
+			flush_interval -1
+		}
+	}
+
+	# Everything else.
+	handle {
+		reverse_proxy 127.0.0.1:8787
+		encode gzip
+	}
+}

@@ -25,6 +25,29 @@ against) can be restored by copying a recent backup over it. The browser receive
 players see new orders and round closes immediately (a slow poll is kept as a
 fallback).
 
+### HTTPS / deploying behind a domain
+
+The app itself speaks plain HTTP and is meant to sit behind a reverse proxy that
+terminates TLS. A ready-to-edit [`Caddyfile`](Caddyfile) is included; [Caddy](https://caddyserver.com)
+obtains and auto-renews a Let's Encrypt certificate for you:
+
+First run the app on loopback, then run Caddy in front of it. The site address
+is set by `$SITE_ADDRESS` and defaults to `localhost`:
+
+```bash
+BIND=127.0.0.1:8787 cargo run --release            # app on loopback (both cases)
+
+caddy run --config ./Caddyfile                      # local: https://localhost
+SITE_ADDRESS=auction.example.com caddy run --config ./Caddyfile   # server: real domain
+```
+
+Locally, Caddy serves `https://localhost` with a self-signed cert — run
+`caddy trust` once to make your browser accept it. On the server, point the
+domain's DNS at the machine and open ports 80 + 443; Caddy then fetches and
+auto-renews a real Let's Encrypt cert. The proxy streams the `/api/events` SSE
+feed without buffering. nginx works too — just proxy to `127.0.0.1:8787` and
+disable buffering on `/api/events`.
+
 The host fills in the **New Game** form on the admin page (`/admin`) — players,
 starting money, debt limit, rounds, the **card-pool source** (see below), the
 **initial deal per rarity**, and the **house offer pricing** — and hits *Open
