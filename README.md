@@ -254,7 +254,7 @@ network, not the open internet.
 | `src/app.rs`    | Shared `App` state: the game behind a mutex, the SSE change-broadcaster, JSON persistence, and the background task (round auto-close + ladder scheduling/expiry). |
 | `src/api.rs`    | Axum JSON handlers + token auth + SSE endpoint; `api_router()` wires the `/api/*` routes. |
 | `src/main.rs`   | Server bootstrap and routes; serves the embedded player (`/`) and admin (`/admin`) pages. |
-| `static/`       | Vanilla HTML/CSS/JS — `index.html`/`app.js` (player), `admin.html`/`admin.js` (host). |
+| `static/`       | Vanilla HTML/CSS/JS — `util.js` (shared helpers + live-update SSE/poll), `index.html`/`app.js` (player), `admin.html`/`admin.js` (host). |
 | `tests/matching.rs` | Engine tests: crossing, mid price, price priority, partial fills, debt limits, self-trade, order persistence, stale-offer capping, same-price rule, order ledger, per-round clears, round flow. |
 | `tests/api.rs` | HTTP integration tests: setup/state flow, token auth on orders, committed/available funds, same-price rule, admin-only close & ledger, timer auto-close, and the ladder schedule/report/confirm/cancel flow. |
 | `tests/ladder.rs` | Ladder engine tests: availability/target caps, slot scheduling, weekly caps, future-only, rematch avoidance, closest-ELO pairing, propose/confirm + ELO updates, cancellation penalty, no-show expiry, host override, standings, serde round-trip. |
