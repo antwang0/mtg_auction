@@ -19,6 +19,9 @@ let timerDeadline = null, clockSkew = 0;
 let modalCardId = null;
 let prevBalance = null, prevHistoryLen = null;
 let uiRestored = false;
+let ladder = null;
+let availSet = new Set();   // slot ids I've toggled on (edit buffer)
+let availDirty = false;     // unsaved availability edits pending
 
 const $ = (id) => document.getElementById(id);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -32,7 +35,15 @@ function fmtUSD(cents) {
   const neg = cents < 0, v = Math.abs(cents);
   return (neg ? "-$" : "$") + Math.floor(v / 100) + "." + String(v % 100).padStart(2, "0");
 }
-function toCents(d) { return Math.round(parseFloat(d) * 100) || 0; }
+// Parse a dollar string into integer cents without going through a binary
+// float, so e.g. "1.005" rounds to 101, not 100. Invalid input yields 0.
+function toCents(d) {
+  const m = String(d).trim().match(/^(\d*)(?:\.(\d*))?$/);
+  if (!m || (!m[1] && !m[2])) return 0;
+  const frac = (m[2] || "").padEnd(2, "0");
+  const round = (m[2] || "").charCodeAt(2) >= 53 ? 1 : 0; // 3rd digit ≥ "5"
+  return (m[1] ? parseInt(m[1], 10) : 0) * 100 + parseInt(frac.slice(0, 2), 10) + round;
+}
 function fmtMV(cmc) { return cmc === null || cmc === undefined ? "—" : String(cmc); }
 function shortType(tl) { if (!tl) return "—"; const i = tl.indexOf("—"); return (i >= 0 ? tl.slice(0, i) : tl).trim(); }
 function escapeHtml(s) {
@@ -63,7 +74,14 @@ async function refresh() {
     state = await api("/api/state");
     render();
     if (!uiRestored) { restoreUi(); uiRestored = true; renderPlan(); renderGallery(); }
+    refreshLadder();
   } catch (e) { console.error(e); }
+}
+
+// Ladder data (standings, matches, the calendar shape, and — for the logged-in
+// player — their own availability/target); fetched alongside state.
+async function refreshLadder() {
+  try { ladder = await api("/api/ladder"); renderLadder(); } catch (e) { console.error(e); }
 }
 
 // ---- derived maps ----
@@ -142,6 +160,7 @@ function render() {
   populateFilterOptions();
   renderPlayers();
   renderHistory();
+  renderTrades();
   renderPlan();
   renderGallery();
   if (modalCardId !== null) renderModalInfo();
@@ -154,8 +173,13 @@ function renderAuth(inGame, loggedIn) {
   $("auth").classList.toggle("hidden", !inGame);
   const me = loggedIn ? state.players.find((p) => p.id === state.me) : null;
   $("auth-status").textContent = me ? `Logged in as ${me.name}` : "";
-  $("token-input").classList.toggle("hidden", loggedIn);
-  $("btn-login").classList.toggle("hidden", loggedIn);
+  // Logged-out controls (name/password + token fallback).
+  ["login-name", "login-pass", "btn-pw-login", "token-input", "btn-login"].forEach((id) =>
+    $(id).classList.toggle("hidden", loggedIn)
+  );
+  // Logged-in controls.
+  $("btn-setpw").classList.toggle("hidden", !loggedIn);
+  $("btn-setpw").textContent = state && state.my_has_password ? "Change password" : "Set password";
   $("btn-logout").classList.toggle("hidden", !loggedIn);
 }
 
@@ -231,7 +255,7 @@ function renderPlayers() {
     const tr = document.createElement("tr");
     const meMark = p.id === state.me ? " ★" : "";
     const debt = p.balance < 0 ? ' style="color:var(--sell)"' : "";
-    tr.innerHTML = `<td>${esc(p.name)}${meMark}</td><td class="num"${debt}>${fmtUSD(p.balance)}</td><td class="num">${p.card_count}</td>`;
+    tr.innerHTML = `<td>${esc(p.name)}${meMark}</td><td class="num"${debt}>${fmtUSD(p.balance)}</td><td class="num">${p.elo}</td><td class="num">${p.card_count}</td>`;
     tb.appendChild(tr);
   });
 }
@@ -258,6 +282,236 @@ function renderHistory() {
     div.appendChild(block);
   });
 }
+
+function renderTrades() {
+  const div = $("my-trades");
+  if (!div) return;
+  div.innerHTML = "";
+  const trades = (state && state.my_trades) || [];
+  if (!state || state.me == null) { div.innerHTML = `<p class="muted">Log in to see your trades.</p>`; return; }
+  if (trades.length === 0) { div.innerHTML = `<p class="muted">You haven't traded yet.</p>`; return; }
+  const tbl = document.createElement("table");
+  tbl.className = "grid";
+  tbl.innerHTML = `<thead><tr><th>Rd</th><th></th><th>Card</th><th>With</th><th class="num">Qty</th><th class="num">Price</th></tr></thead>`;
+  const tb = document.createElement("tbody");
+  [...trades].reverse().forEach((t) => {
+    const tr = document.createElement("tr");
+    const side = t.side === "bought"
+      ? `<span class="buyer">bought</span>`
+      : `<span class="seller">sold</span>`;
+    tr.innerHTML =
+      `<td>${t.round}</td><td>${side}</td><td>${esc(t.name)}</td>` +
+      `<td>${esc(t.counterparty)}</td><td class="num">×${t.qty}</td><td class="num">${fmtUSD(t.price)}</td>`;
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  div.appendChild(tbl);
+}
+
+// ---- ELO ladder ----
+// All times are rendered in the viewer's local timezone (slots are UTC instants
+// server-side; only the display shifts).
+function fmtSlot(epoch) {
+  return new Date(epoch * 1000).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function localDayKey(epoch) {
+  const d = new Date(epoch * 1000);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+function localDayLabel(epoch) {
+  return new Date(epoch * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+function localTimeLabel(epoch) {
+  return new Date(epoch * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function renderLadder() {
+  if (!ladder) return;
+
+  // Weekly target (don't clobber the field while the user is editing it).
+  const gpw = $("l-gpw");
+  if (gpw && document.activeElement !== gpw) gpw.value = ladder.my_games_per_week || 0;
+  if (gpw) gpw.max = ladder.max_games_per_week;
+  $("l-gpw-max").textContent = `/ ${ladder.max_games_per_week} max`;
+
+  // Availability: re-sync from the server unless there are unsaved edits.
+  if (!availDirty) availSet = new Set(ladder.my_availability || []);
+  renderCalendar();
+  renderMyMatches();
+  renderAllMatches();
+
+  // ELO standings.
+  const tb = $("t-standings").querySelector("tbody");
+  tb.innerHTML = "";
+  (ladder.standings || []).forEach((s) => {
+    const tr = document.createElement("tr");
+    if (state && s.player === state.me) tr.className = "mine";
+    tr.innerHTML =
+      `<td>${s.rank}</td><td>${esc(s.name)}${state && s.player === state.me ? " ★" : ""}</td>` +
+      `<td class="num">${s.elo}</td><td class="num">${s.wins}-${s.losses}-${s.draws}</td><td class="num">${s.scheduled}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+// Availability calendar: one row per local day, a clickable time chip per slot.
+// Slots are grouped by their *local* day so the grid reads correctly in any
+// timezone (a 21:00 UTC slot can land on the next local morning, etc.).
+function renderCalendar() {
+  const cal = $("l-calendar");
+  if (!(state && state.me != null)) { cal.innerHTML = `<p class="muted">Log in to set your availability.</p>`; return; }
+  const blocks = ladder.blocks || [9, 13, 18, 21];
+  const nb = blocks.length;
+  const days = ladder.window_days || 14;
+  const now = ladder.server_now || Math.floor(Date.now() / 1000);
+  const todayUtc = Math.floor(now / 86400);
+
+  // Gather candidate slots with a day of padding each side so local-day
+  // grouping is complete near the window edges regardless of UTC offset.
+  const slots = [];
+  for (let d = -1; d <= days + 1; d++) {
+    for (let b = 0; b < nb; b++) {
+      const slot = (todayUtc + d) * nb + b;
+      slots.push({ slot, start: (todayUtc + d) * 86400 + blocks[b] * 3600 });
+    }
+  }
+  const byDay = new Map();
+  for (const s of slots) {
+    const key = localDayKey(s.start);
+    if (!byDay.has(key)) byDay.set(key, { repr: s.start, items: [] });
+    byDay.get(key).items.push(s);
+  }
+  const ordered = [...byDay.values()].sort((a, b) => a.repr - b.repr);
+  const todayKey = localDayKey(now);
+  const startIdx = Math.max(0, ordered.findIndex((d) => localDayKey(d.repr) === todayKey));
+  const visible = ordered.slice(startIdx, startIdx + days);
+
+  let html = `<table class="cal"><tbody>`;
+  for (const day of visible) {
+    html += `<tr><td class="cal-day">${localDayLabel(day.repr)}</td><td>`;
+    day.items.sort((a, b) => a.start - b.start).forEach((s) => {
+      const past = s.start <= now;
+      const on = availSet.has(s.slot);
+      html += `<button class="cal-chip${on ? " on" : ""}" ${past ? "disabled" : `data-slot="${s.slot}"`}>${localTimeLabel(s.start)}</button>`;
+    });
+    html += `</td></tr>`;
+  }
+  cal.innerHTML = html + `</tbody></table>`;
+}
+
+// The logged-in player's own matches, with report / confirm / cancel controls.
+function renderMyMatches() {
+  const box = $("l-mymatches");
+  const me = state ? state.me : null;
+  if (me == null) { box.innerHTML = `<p class="muted">Log in to see your matches.</p>`; return; }
+  const mine = (ladder.matches || []).filter((m) => m.a === me || m.b === me).sort((x, y) => x.slot_start - y.slot_start);
+  box.innerHTML = mine.length
+    ? mine.map((m) => matchCard(m, me)).join("")
+    : `<p class="muted">No matches yet. Set your availability and games per week, and the system will schedule them.</p>`;
+}
+
+function matchCard(m, me) {
+  const iAmA = m.a === me;
+  const opp = iAmA ? m.b_name : m.a_name;
+  const myW = iAmA ? m.a_wins : m.b_wins, oppW = iAmA ? m.b_wins : m.a_wins;
+  const head = `<div class="matchhead"><b>vs ${esc(opp)}</b> <span class="muted">${fmtSlot(m.slot_start)}</span></div>`;
+
+  if (m.status === "completed") {
+    const delta = iAmA ? m.a_delta : m.b_delta;
+    const verdict = myW > oppW ? "won" : myW < oppW ? "lost" : "drew";
+    return `<div class="matchcard">${head}<span class="muted">final ${myW}–${oppW} · ${verdict} · ELO ${delta >= 0 ? "+" : ""}${delta}</span></div>`;
+  }
+  if (m.status === "cancelled") {
+    const byMe = m.cancelled_by === me;
+    const delta = iAmA ? m.a_delta : m.b_delta;
+    return `<div class="matchcard">${head}<span class="muted">cancelled ${byMe ? `by you (ELO ${delta})` : "by opponent"}</span></div>`;
+  }
+  if (m.status === "expired") {
+    return `<div class="matchcard">${head}<span class="muted">expired — no result was reported in time</span></div>`;
+  }
+
+  // Scheduled: result entry (pre-filled from any proposal) + confirm + cancel.
+  const pw = m.proposed_by != null ? myW : 2, ow = m.proposed_by != null ? oppW : 0, dw = m.proposed_by != null ? m.draws : 0;
+  const form =
+    `<span class="report-row">` +
+    `<input class="lm-yw" type="number" min="0" value="${pw}" data-mid="${m.id}" title="your game wins" /> – ` +
+    `<input class="lm-ow" type="number" min="0" value="${ow}" data-mid="${m.id}" title="${esc(opp)} game wins" />` +
+    `<input class="lm-dw" type="number" min="0" value="${dw}" data-mid="${m.id}" title="draws" />` +
+    `<button class="buy lm-report" data-mid="${m.id}" data-a="${iAmA ? 1 : 0}">Report</button></span>`;
+  let note = `<div class="muted">Report your result:</div>`, confirmBtn = "";
+  if (m.proposed_by === me) {
+    note = `<div class="muted">You reported ${myW}–${oppW}; waiting for ${esc(opp)} to confirm.</div>`;
+  } else if (m.proposed_by != null) {
+    note = `<div class="muted">${esc(opp)} reported ${myW}–${oppW}. Confirm or counter:</div>`;
+    confirmBtn = `<button class="buy lm-confirm" data-mid="${m.id}">Confirm ${myW}–${oppW}</button> `;
+  }
+  return `<div class="matchcard">${head}${note}<div class="actrow">${confirmBtn}<button class="sell lm-cancel" data-mid="${m.id}">Cancel</button></div>${form}</div>`;
+}
+
+// All matches (read-only overview).
+function renderAllMatches() {
+  const box = $("l-allmatches");
+  const ms = (ladder.matches || []).slice().sort((a, b) => a.slot_start - b.slot_start);
+  if (!ms.length) { box.innerHTML = `<p class="muted">No matches scheduled yet.</p>`; return; }
+  box.innerHTML =
+    `<table class="grid"><thead><tr><th>When</th><th>Match</th><th class="num">Result</th></tr></thead><tbody>` +
+    ms.map((m) => {
+      const mine = state && (m.a === state.me || m.b === state.me) ? ' class="mine"' : "";
+      const res = m.status === "completed" ? `${m.a_wins}–${m.b_wins}`
+        : m.status === "cancelled" ? `<span class="muted">cancelled</span>`
+          : m.status === "expired" ? `<span class="muted">expired</span>`
+            : m.proposed_by != null ? `<span class="muted">reported</span>` : `<span class="muted">scheduled</span>`;
+      return `<tr${mine}><td>${fmtSlot(m.slot_start)}</td><td>${esc(m.a_name)} <span class="muted">vs</span> ${esc(m.b_name)}</td><td class="num">${res}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+}
+
+// ---- ladder actions ----
+$("l-calendar").addEventListener("click", (e) => {
+  const chip = e.target.closest(".cal-chip");
+  if (!chip || !chip.dataset.slot) return;
+  const slot = Number(chip.dataset.slot);
+  if (availSet.has(slot)) availSet.delete(slot); else availSet.add(slot);
+  availDirty = true;
+  chip.classList.toggle("on");
+});
+
+$("l-avail-save").onclick = async () => {
+  try {
+    await api("/api/ladder/availability", "POST", { slots: [...availSet] });
+    availDirty = false;
+    $("l-prefs-msg").textContent = "Availability saved.";
+    await refresh();
+  } catch (e) { toastError(e.message); }
+};
+
+$("l-gpw-save").onclick = async () => {
+  try {
+    await api("/api/ladder/games", "POST", { games_per_week: Math.max(0, Number($("l-gpw").value) || 0) });
+    $("l-prefs-msg").textContent = "Weekly target saved.";
+    await refresh();
+  } catch (e) { toastError(e.message); }
+};
+
+$("l-mymatches").addEventListener("click", async (e) => {
+  const rep = e.target.closest(".lm-report");
+  if (rep) {
+    const mid = Number(rep.dataset.mid), iAmA = rep.dataset.a === "1";
+    const v = (cls) => Math.max(0, Number($("l-mymatches").querySelector(`.${cls}[data-mid="${mid}"]`).value) || 0);
+    const yw = v("lm-yw"), ow = v("lm-ow"), dw = v("lm-dw");
+    const body = { match_id: mid, a_wins: iAmA ? yw : ow, b_wins: iAmA ? ow : yw, draws: dw };
+    try { await api("/api/ladder/report", "POST", body); await refresh(); } catch (err) { toastError(err.message); }
+    return;
+  }
+  const cf = e.target.closest(".lm-confirm");
+  if (cf) {
+    try { await api("/api/ladder/confirm", "POST", { match_id: Number(cf.dataset.mid) }); await refresh(); } catch (err) { toastError(err.message); }
+    return;
+  }
+  const cx = e.target.closest(".lm-cancel");
+  if (cx) {
+    if (!confirm("Cancel this match? You'll take an ELO penalty.")) return;
+    try { await api("/api/ladder/cancel", "POST", { match_id: Number(cx.dataset.mid) }); await refresh(); } catch (err) { toastError(err.message); }
+  }
+});
 
 // ---- filtering & sorting ----
 function getFilters(prefix) {
@@ -553,6 +807,25 @@ $("btn-login").onclick = async () => {
   try { await api("/api/login", "POST", { token }); setToken(token); $("token-input").value = ""; await refresh(); }
   catch (e) { toastError(`Login failed: ${e.message}`); }
 };
+$("btn-pw-login").onclick = async () => {
+  const name = $("login-name").value.trim();
+  const password = $("login-pass").value;
+  if (!name || !password) return;
+  try {
+    const r = await api("/api/password-login", "POST", { name, password });
+    setToken(r.token); $("login-pass").value = ""; await refresh();
+  } catch (e) { toastError(`Login failed: ${e.message}`); }
+};
+$("login-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btn-pw-login").click(); });
+$("btn-setpw").onclick = async () => {
+  const password = prompt(
+    "Choose a password to log in by name.\n\n" +
+    "⚠️ Do NOT reuse a password you use anywhere else — this site's security is weak and the password is only lightly protected."
+  );
+  if (password == null) return;
+  try { await api("/api/set-password", "POST", { password }); toast("Password saved."); await refresh(); }
+  catch (e) { toastError(e.message); }
+};
 $("btn-logout").onclick = async () => { setToken(""); await refresh(); };
 
 async function cancelOrder(kind, card) {
@@ -604,6 +877,7 @@ $$(".tab").forEach((t) => (t.onclick = () => {
   $$(".tab").forEach((x) => x.classList.toggle("active", x === t));
   $("tab-inventory").classList.toggle("hidden", activeTab !== "inventory");
   $("tab-market").classList.toggle("hidden", activeTab !== "market");
+  $("tab-ladder").classList.toggle("hidden", activeTab !== "ladder");
 }));
 
 // Filter bars

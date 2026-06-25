@@ -1,7 +1,7 @@
 //! Tests for game setup, order validation, and the auction matching engine.
 
 use mtg_auction::engine::Game;
-use mtg_auction::model::{CardPool, Config, OrderAction, OrderKind, Phase};
+use mtg_auction::model::{CardPool, Config, OrderAction, OrderKind, Phase, PoolCard, Rarity};
 
 fn base_config() -> Config {
     Config {
@@ -14,6 +14,7 @@ fn base_config() -> Config {
         pack_size: 15,
         seed: 7,
         round_seconds: 0,
+        ..Config::default()
     }
 }
 
@@ -399,4 +400,65 @@ fn reproducible_from_seed() {
     for (x, y) in a.card_order.iter().zip(b.card_order.iter()) {
         assert_eq!(a.cards[x].name, b.cards[y].name);
     }
+}
+
+#[test]
+fn setup_rejects_absurd_ladder_config() {
+    let with = |f: fn(&mut Config)| {
+        let mut c = base_config();
+        f(&mut c);
+        Game::setup(c, CardPool::sample())
+    };
+    assert!(with(|c| c.schedule_window_days = 100_000).is_err(), "runaway scheduling window");
+    assert!(with(|c| c.max_games_per_week = 10_000).is_err(), "absurd weekly cap");
+    assert!(with(|c| c.cancel_penalty = -5).is_err(), "negative penalty would reward cancelling");
+    assert!(with(|c| c.elo_k = -1).is_err(), "negative K-factor");
+    assert!(with(|c| c.starting_elo = -1).is_err(), "negative starting ELO");
+    // Sane values still succeed.
+    assert!(with(|c| c.schedule_window_days = 30).is_ok());
+}
+
+#[test]
+fn manual_pool_deals_exactly_the_listed_cards() {
+    let pc = |name: &str| PoolCard {
+        name: name.into(),
+        rarity: Rarity::Common,
+        image: None,
+        ref_price: None,
+        type_line: None,
+        cmc: None,
+        mana_cost: None,
+    };
+    let pool = CardPool {
+        set_name: "Custom list".into(),
+        exact: Some(vec![(pc("Alpha"), 3), (pc("Beta"), 2)]),
+        ..Default::default()
+    };
+    // Pack settings are irrelevant for a manual pool and must be ignored.
+    let mut cfg = base_config();
+    cfg.num_packs = 999;
+    cfg.pack_size = 999;
+    let g = Game::setup(cfg, pool).unwrap();
+
+    assert_eq!(g.cards.len(), 2, "two distinct cards in the catalog");
+    let total: u32 = g.players.values().map(|p| p.holdings.values().sum::<u32>()).sum();
+    assert_eq!(total, 5, "exactly the listed copies are dealt");
+
+    let supply = |name: &str| -> u32 {
+        let id = *g.cards.iter().find(|(_, c)| c.name == name).unwrap().0;
+        g.players.values().map(|p| p.held(id)).sum()
+    };
+    assert_eq!(supply("Alpha"), 3);
+    assert_eq!(supply("Beta"), 2);
+}
+
+#[test]
+fn a_pack_has_no_duplicate_cards_when_the_pool_allows() {
+    // A single 10-card pack drawn from the 38-distinct sample set should be all
+    // distinct cards, so the interned catalog has exactly one entry per slot.
+    let mut cfg = base_config();
+    cfg.num_packs = 1;
+    cfg.pack_size = 10;
+    let g = Game::setup(cfg, CardPool::sample()).unwrap();
+    assert_eq!(g.cards.len(), 10, "no card should be drawn twice in one pack");
 }

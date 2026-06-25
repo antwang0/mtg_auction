@@ -14,8 +14,11 @@
     <span id="conn" class="conn down" title="connecting…">● offline</span>
     <div class="auth" id="auth">
       <span id="auth-status" class="muted"></span>
-      <input id="token-input" type="text" placeholder="paste host token" autocomplete="off" />
-      <button id="btn-login">Log in</button>
+      <input id="login-name" type="text" placeholder="host name" autocomplete="username" />
+      <input id="login-pass" type="password" placeholder="password" autocomplete="current-password" />
+      <button id="btn-pw-login">Log in</button>
+      <input id="token-input" type="text" placeholder="or host token" autocomplete="off" />
+      <button id="btn-login" class="ghost">Token</button>
       <button id="btn-logout" class="ghost hidden">Log out</button>
       <a class="navlink" href="/">← Game</a>
     </div>
@@ -27,9 +30,6 @@
       <div class="grid-form">
         <label>Players (comma separated)
           <input id="cfg-players" type="text" value="Alice, Bob, Carol, Dave" />
-        </label>
-        <label>Set (Scryfall code)
-          <input id="cfg-set" type="text" value="dom" />
         </label>
         <label>Starting money ($)
           <input id="cfg-money" type="number" step="0.01" min="0" value="100.00" />
@@ -43,18 +43,72 @@
         <label>Round timer (s, 0 = manual)
           <input id="cfg-timer" type="number" value="0" min="0" />
         </label>
-        <label>Packs to open
-          <input id="cfg-packs" type="number" value="4" min="1" />
-        </label>
-        <label>Cards per pack
-          <input id="cfg-packsize" type="number" value="15" min="1" />
-        </label>
         <label>Seed
           <input id="cfg-seed" type="number" value="42" />
         </label>
       </div>
+
+      <fieldset class="pool-source">
+        <legend>Card pool source <span class="muted">(pick one)</span></legend>
+        <label class="radio"><input type="radio" name="pool" value="sample" checked /> Built-in sample set (offline)</label>
+        <label class="radio"><input type="radio" name="pool" value="scryfall" /> Scryfall set code</label>
+        <label class="radio"><input type="radio" name="pool" value="manual" /> Pasted card list</label>
+
+        <div class="pool-pane" data-pool="scryfall" hidden>
+          <label>Set code
+            <input id="cfg-set" type="text" value="dom" placeholder="dom, mh3, woe…" />
+          </label>
+        </div>
+
+        <div class="pool-pane" data-pool="packs">
+          <div class="grid-form">
+            <label>Packs to open <input id="cfg-packs" type="number" value="4" min="1" /></label>
+            <label>Cards per pack <input id="cfg-packsize" type="number" value="15" min="1" /></label>
+          </div>
+        </div>
+
+        <div class="pool-pane" data-pool="manual" hidden>
+          <label class="cardlist-field">Card list — one <code>quantity name</code> per line
+            <textarea id="cfg-cardlist" rows="6" placeholder="3 Lightning Bolt&#10;1 Black Lotus&#10;2 Counterspell"></textarea>
+          </label>
+
+          <details class="set-picker">
+            <summary>Build the list from a set ▾</summary>
+            <div class="order-row">
+              <input id="picker-set" type="text" placeholder="set code, e.g. dom (or sample)" />
+              <button id="btn-load-set" type="button">Load set</button>
+            </div>
+            <div id="picker-msg" class="muted"></div>
+            <div id="picker-tools" class="picker-tools hidden">
+              <input id="picker-filter" type="search" placeholder="filter cards…" />
+              <button id="btn-add-all" type="button" class="ghost">Add all shown ×1</button>
+            </div>
+            <div id="picker-list" class="picker-list"></div>
+          </details>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Initial deal per player <span class="muted">(by rarity; leftovers go to the house)</span></legend>
+        <div class="grid-form">
+          <label>Commons <input id="cfg-deal-c" type="number" value="0" min="0" /></label>
+          <label>Uncommons <input id="cfg-deal-u" type="number" value="0" min="0" /></label>
+          <label>Rares <input id="cfg-deal-r" type="number" value="0" min="0" /></label>
+          <label>Mythics <input id="cfg-deal-m" type="number" value="0" min="0" /></label>
+        </div>
+        <p class="muted">Leave all at 0 to deal every opened card round-robin (nothing held back).</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>House offer pricing <span class="muted">(reference price + Gaussian noise)</span></legend>
+        <div class="grid-form">
+          <label>Std dev (% of ref) <input id="cfg-house-stdev" type="number" value="10" min="0" step="0.5" /></label>
+          <label>Variance cap (% of ref) <input id="cfg-house-cap" type="number" value="25" min="0" step="0.5" /></label>
+        </div>
+      </fieldset>
+
       <button id="btn-setup" class="primary">Open packs &amp; deal</button>
-      <p class="muted">The first player listed is the host. Cards are pulled from <a href="https://scryfall.com/sets" target="_blank" rel="noopener">Scryfall</a> by set code (e.g. <code>dom</code>, <code>mh3</code>, <code>woe</code>); use <code>sample</code> for the built-in offline set. Resetting a game in progress requires the current host token.</p>
+      <p class="muted">The first player listed is the host. Scryfall sets are pulled by code from <a href="https://scryfall.com/sets" target="_blank" rel="noopener">Scryfall</a> (e.g. <code>dom</code>, <code>mh3</code>); the card list deals exactly those cards. Resetting a game in progress requires the current host token.</p>
     </section>
 
     <section id="tokens" class="card hidden">
@@ -71,6 +125,54 @@
         <button id="btn-close" class="primary">Close auction &amp; match orders</button>
       </div>
       <div id="ctrl-error" class="error"></div>
+    </section>
+
+    <section id="manage" class="card hidden">
+      <h2>Manage <span class="muted">(mid-game)</span></h2>
+
+      <h3>House inventory <span class="muted">(unallocated cards)</span></h3>
+      <div id="house-info" class="muted"></div>
+      <div class="admin">
+        <button id="btn-offer-house" class="primary">Offer house cards into the auction</button>
+      </div>
+      <p class="muted">Lists every house card with a reference price at that price plus Gaussian noise (per the pricing set at game start). Re-running re-rolls the prices.</p>
+      <table id="house-table" class="grid">
+        <thead><tr><th>Card</th><th class="num">Qty held</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3>Add cards</h3>
+      <label class="cardlist-field">Card list to add to the house — one <code>quantity name</code> per line
+        <textarea id="add-cardlist" rows="4" placeholder="2 Llanowar Elves&#10;1 Shivan Dragon"></textarea>
+      </label>
+      <div class="admin"><button id="btn-add-cards" class="primary">Add cards to house</button></div>
+
+      <h3>Add player</h3>
+      <div class="order-row">
+        <input id="add-player-name" type="text" placeholder="new player name" autocomplete="off" />
+        <button id="btn-add-player" class="primary">Add player</button>
+      </div>
+      <p class="muted">The new player is dealt their initial per-rarity allocation from the house and gets a token (shown above for sharing).</p>
+
+      <div id="manage-error" class="error"></div>
+    </section>
+
+    <section id="ladder-card" class="card hidden">
+      <h2>ELO Ladder <span class="muted">(matches auto-schedule from player availability)</span></h2>
+      <div id="ladder-info" class="muted"></div>
+      <div class="admin">
+        <button id="btn-schedule" class="primary">Run scheduler now</button>
+      </div>
+      <h3>Standings</h3>
+      <table id="standings" class="grid">
+        <thead>
+          <tr><th>#</th><th>Player</th><th class="num">ELO</th><th class="num">W-L-D</th><th class="num" title="upcoming">Sched</th><th class="num" title="cancellations">Cxl</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <h3>Matches <span class="muted">(set result = host override, no confirmation)</span></h3>
+      <div id="ladder-matches"></div>
+      <div id="tourney-error" class="error"></div>
     </section>
 
     <div class="columns">

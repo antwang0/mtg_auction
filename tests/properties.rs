@@ -18,6 +18,7 @@ fn config(seed: u64, debt: i64) -> Config {
         pack_size: 8,
         seed,
         round_seconds: 0,
+        ..Config::default()
     }
 }
 
@@ -47,7 +48,7 @@ fn check_invariants(g: &Game, init_money: i64, init_cards: u32, debt: i64) {
     assert_eq!(total_cards(g), init_cards, "card copies must be conserved");
     for p in g.players.values() {
         assert!(p.balance >= -debt, "balance {} breached debt limit -{}", p.balance, debt);
-        for (_, &qty) in &p.holdings {
+        for &qty in p.holdings.values() {
             assert!(qty > 0, "holdings must only store positive quantities");
         }
     }

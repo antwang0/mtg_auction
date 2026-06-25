@@ -14,8 +14,12 @@
     <span id="conn" class="conn down" title="connecting…">● offline</span>
     <div class="auth" id="auth">
       <span id="auth-status" class="muted"></span>
-      <input id="token-input" type="text" placeholder="paste your token" autocomplete="off" />
-      <button id="btn-login">Log in</button>
+      <input id="login-name" type="text" placeholder="name" autocomplete="username" />
+      <input id="login-pass" type="password" placeholder="password" autocomplete="current-password" />
+      <button id="btn-pw-login">Log in</button>
+      <input id="token-input" type="text" placeholder="or token" autocomplete="off" />
+      <button id="btn-login" class="ghost">Token</button>
+      <button id="btn-setpw" class="ghost hidden">Set password</button>
       <button id="btn-logout" class="ghost hidden">Log out</button>
       <a class="navlink" href="/admin">Admin →</a>
     </div>
@@ -31,6 +35,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="inventory">Inventory</button>
         <button class="tab" data-tab="market">Market</button>
+        <button class="tab" data-tab="ladder">Ladder</button>
       </nav>
 
       <!-- ===== INVENTORY TAB ===== -->
@@ -83,12 +88,15 @@
           <section class="card">
             <h2>Players</h2>
             <table id="players">
-              <thead><tr><th>Player</th><th class="num">Money</th><th class="num">Cards</th></tr></thead>
+              <thead><tr><th>Player</th><th class="num">Money</th><th class="num">ELO</th><th class="num">Cards</th></tr></thead>
               <tbody></tbody>
             </table>
 
             <h2>Auction Results</h2>
             <div id="history"></div>
+
+            <h2>Your Trades <span class="muted">— what you've bought and sold</span></h2>
+            <div id="my-trades"></div>
           </section>
         </div>
 
@@ -156,6 +164,43 @@
           </div>
           <div id="gallery" class="gallery"></div>
         </section>
+      </div>
+
+      <!-- ===== LADDER TAB ===== -->
+      <div id="tab-ladder" class="tabpane hidden">
+        <div class="columns">
+          <section class="card">
+            <h2>Your Ladder</h2>
+            <div class="gpw-row">
+              <label>Games per week
+                <input id="l-gpw" type="number" min="0" value="0" />
+              </label>
+              <span id="l-gpw-max" class="muted"></span>
+              <button id="l-gpw-save" class="ghost">save</button>
+            </div>
+
+            <h3>Your Availability <span class="muted">— click the times you're free (shown in your local time)</span></h3>
+            <div id="l-calendar" class="calwrap"></div>
+            <button id="l-avail-save" class="primary">Save availability</button>
+            <span id="l-prefs-msg" class="muted"></span>
+
+            <h3>Your Matches</h3>
+            <div id="l-mymatches"></div>
+          </section>
+
+          <section class="card">
+            <h2>ELO Standings</h2>
+            <table id="t-standings" class="grid">
+              <thead>
+                <tr><th>#</th><th>Player</th><th class="num">ELO</th><th class="num">W-L-D</th><th class="num" title="upcoming matches">Sched</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+
+            <h3>All Matches</h3>
+            <div id="l-allmatches"></div>
+          </section>
+        </div>
       </div>
     </div>
   </main>
