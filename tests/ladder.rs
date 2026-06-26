@@ -2,8 +2,11 @@
 //! rematch avoidance, ELO updates, cancellations, and standings.
 
 use mtg_auction::engine::Game;
-use mtg_auction::model::{CardPool, Config, MatchStatus};
+use mtg_auction::model::{CardPool, Config, MatchStatus, DAY_BLOCKS};
 use std::collections::HashSet;
+
+/// Blocks per day, derived so the tests track [`DAY_BLOCKS`] rather than a literal.
+const NB: i64 = DAY_BLOCKS.len() as i64;
 
 const DAY: u64 = 86_400;
 /// A Monday (epoch day 102) at 00:00 UTC, so the small day-offsets the tests use
@@ -21,7 +24,7 @@ fn game(players: &[&str]) -> Game {
 
 /// Slot id for a day offset from "today" (NOW) and a block index.
 fn slot(day_off: i64, block: i64) -> i64 {
-    (((NOW / DAY) as i64) + day_off) * 4 + block
+    (((NOW / DAY) as i64) + day_off) * NB + block
 }
 
 /// Give every player a weekly target and the same availability.
@@ -64,7 +67,7 @@ fn schedules_available_players_in_a_slot() {
 fn respects_the_weekly_cap() {
     let mut g = game(&["A", "B"]);
     // Plenty of shared slots in one week, but each wants only one game.
-    let slots: Vec<i64> = (0..4).map(|b| slot(1, b)).chain((0..4).map(|b| slot(2, b))).collect();
+    let slots: Vec<i64> = (0..NB).map(|b| slot(1, b)).chain((0..NB).map(|b| slot(2, b))).collect();
     prefs(&mut g, &[1, 2], 1, &slots);
     assert_eq!(g.auto_schedule(NOW), 1, "a weekly cap of 1 yields a single match");
 }

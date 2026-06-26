@@ -333,13 +333,21 @@ function renderLadder() {
   });
 }
 
+// Name the daily blocks. With two blocks they're the morning and evening slots;
+// any other count just shows the clock time (the label is dropped).
+function blockName(block, nb) {
+  if (nb === 2) return block === 0 ? "Morning" : "Evening";
+  if (nb === 1) return "Anytime";
+  return "";
+}
+
 // Availability calendar: one row per local day, a clickable time chip per slot.
 // Slots are grouped by their *local* day so the grid reads correctly in any
 // timezone (a 21:00 UTC slot can land on the next local morning, etc.).
 function renderCalendar() {
   const cal = $("l-calendar");
   if (!(state && state.me != null)) { cal.innerHTML = `<p class="muted">Log in to set your availability.</p>`; return; }
-  const blocks = ladder.blocks || [9, 13, 18, 21];
+  const blocks = ladder.blocks || [9, 21];
   const nb = blocks.length;
   const days = ladder.window_days || 14;
   const now = ladder.server_now || Math.floor(Date.now() / 1000);
@@ -351,7 +359,7 @@ function renderCalendar() {
   for (let d = -1; d <= days + 1; d++) {
     for (let b = 0; b < nb; b++) {
       const slot = (todayUtc + d) * nb + b;
-      slots.push({ slot, start: (todayUtc + d) * 86400 + blocks[b] * 3600 });
+      slots.push({ slot, block: b, start: (todayUtc + d) * 86400 + blocks[b] * 3600 });
     }
   }
   const byDay = new Map();
@@ -371,7 +379,9 @@ function renderCalendar() {
     day.items.sort((a, b) => a.start - b.start).forEach((s) => {
       const past = s.start <= now;
       const on = availSet.has(s.slot);
-      html += `<button class="cal-chip${on ? " on" : ""}" ${past ? "disabled" : `data-slot="${s.slot}"`}>${localTimeLabel(s.start)}</button>`;
+      const name = blockName(s.block, nb);
+      const label = name ? `<b>${name}</b> <span class="cal-time">${localTimeLabel(s.start)}</span>` : localTimeLabel(s.start);
+      html += `<button class="cal-chip${on ? " on" : ""}" ${past ? "disabled" : `data-slot="${s.slot}"`}>${label}</button>`;
     });
     html += `</td></tr>`;
   }

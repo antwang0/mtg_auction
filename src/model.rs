@@ -308,8 +308,14 @@ pub struct OrderEvent {
 
 /// Availability is expressed in discrete time blocks. Each day is split into
 /// these block start hours (UTC); a slot id packs the day (days since the Unix
-/// epoch) and the block index together as `slot = day * 4 + block`.
-pub const DAY_BLOCKS: [u32; 4] = [9, 13, 18, 21];
+/// epoch) and the block index together as `slot = day * DAY_BLOCKS.len() + block`.
+///
+/// Two blocks per day — a morning and an evening slot. The hours are fixed UTC
+/// instants rendered in each viewer's local timezone, and the UI labels block 0
+/// "Morning" and block 1 "Evening". Adjust these hours to suit the group's
+/// timezones; changing the *count* also reshapes slot ids, so prefer doing it
+/// before a ladder has availability/matches saved.
+pub const DAY_BLOCKS: [u32; 2] = [9, 21];
 
 /// A self-scheduling ELO ladder layered on a game: every match (upcoming,
 /// played, or cancelled), plus each player's availability and weekly target.

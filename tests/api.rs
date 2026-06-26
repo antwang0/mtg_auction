@@ -1,7 +1,11 @@
 //! HTTP-level integration tests: spin up the real router on an ephemeral port
 //! and drive it with reqwest. Uses the offline `sample` set (no network).
 
+use mtg_auction::model::DAY_BLOCKS;
 use serde_json::{json, Value};
+
+/// Blocks per day, derived so the tests track [`DAY_BLOCKS`] rather than a literal.
+const NB: i64 = DAY_BLOCKS.len() as i64;
 
 /// Start the API server on a random port and return its base URL. When
 /// `with_timer` is set, the round auto-close task runs too.
@@ -240,7 +244,7 @@ async fn ladder_schedule_report_confirm_flow() {
 
     // Both players set availability for the same upcoming slot + a weekly target.
     let now = c.get(format!("{base}/api/ladder")).send().await.unwrap().json::<Value>().await.unwrap()["server_now"].as_u64().unwrap();
-    let slot = ((now / 86_400) as i64 + 1) * 4; // tomorrow, first block
+    let slot = ((now / 86_400) as i64 + 1) * NB; // tomorrow, first block
     for tok in [&alice, &bob] {
         let r = c.post(format!("{base}/api/ladder/availability")).header("x-token", tok).json(&json!({ "slots": [slot] })).send().await.unwrap();
         assert_eq!(r.status(), 200);
@@ -285,7 +289,7 @@ async fn ladder_cancel_costs_elo() {
     let (alice, bob) = setup_game(&c, &base).await;
 
     let now = c.get(format!("{base}/api/ladder")).send().await.unwrap().json::<Value>().await.unwrap()["server_now"].as_u64().unwrap();
-    let slot = ((now / 86_400) as i64 + 1) * 4;
+    let slot = ((now / 86_400) as i64 + 1) * NB;
     for tok in [&alice, &bob] {
         c.post(format!("{base}/api/ladder/availability")).header("x-token", tok).json(&json!({ "slots": [slot] })).send().await.unwrap();
         c.post(format!("{base}/api/ladder/games")).header("x-token", tok).json(&json!({ "games_per_week": 1 })).send().await.unwrap();
