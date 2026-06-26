@@ -97,7 +97,8 @@ function render() {
   $("ledger-card").classList.toggle("hidden", !state.am_admin);
   $("trades-card").classList.toggle("hidden", !state.am_admin);
   $("ladder-card").classList.toggle("hidden", !state.am_admin || !inGame);
-  if (state.am_admin && inGame) renderHouse();
+  $("deliveries-card").classList.toggle("hidden", !state.am_admin || !inGame);
+  if (state.am_admin && inGame) { renderHouse(); renderDeliveries(); }
   if (state.am_admin && inGame) {
     const timer = state.round_seconds ? ` · auto-close timer ${state.round_seconds}s` : "";
     $("round-info").textContent =
@@ -696,6 +697,47 @@ function renderHouse() {
     tb.appendChild(tr);
   });
 }
+
+function deliveryDeadline(d) {
+  if (d.status !== "pending") return "—";
+  const now = (state && state.server_now) || Math.floor(Date.now() / 1000);
+  const rem = d.deadline - now;
+  if (rem <= 0) return "overdue";
+  const days = Math.floor(rem / 86400), hrs = Math.floor((rem % 86400) / 3600);
+  return `${days > 0 ? days + "d " : ""}${hrs}h`;
+}
+
+function renderDeliveries() {
+  const tb = $("deliveries-table").querySelector("tbody");
+  tb.innerHTML = "";
+  const ds = (state && state.all_deliveries) || [];
+  if (!ds.length) {
+    tb.innerHTML = `<tr><td colspan="8" class="muted">No deliveries yet.</td></tr>`;
+    return;
+  }
+  [...ds].reverse().forEach((d) => {
+    const tr = document.createElement("tr");
+    const reverseBtn = d.status === "reversed" ? "" : `<button class="ghost d-reverse" data-id="${d.id}">Reverse</button>`;
+    const note = d.note ? `<div class="muted">${esc(d.note)}</div>` : "";
+    tr.innerHTML =
+      `<td>${esc(d.card_name)}</td><td class="num">×${d.qty}</td>` +
+      `<td>${esc(d.seller_name)}</td><td>${esc(d.buyer_name)}</td>` +
+      `<td class="num">${fmtUSD(d.total)}</td>` +
+      `<td class="dstat-${d.status}">${d.status}${note}</td>` +
+      `<td>${deliveryDeadline(d)}</td><td>${reverseBtn}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+$("deliveries-table").addEventListener("click", async (e) => {
+  const b = e.target.closest(".d-reverse");
+  if (!b) return;
+  if (!confirm("Reverse this delivery? Cards and money are returned (no penalty).")) return;
+  try {
+    await api("/api/deliveries/reverse", "POST", { delivery_id: Number(b.dataset.id) });
+    await refresh();
+  } catch (err) { $("deliveries-error").textContent = err.message; }
+});
 
 $("btn-tokens-done").onclick = () => $("tokens").classList.add("hidden");
 

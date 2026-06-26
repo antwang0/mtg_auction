@@ -36,6 +36,7 @@
         <button class="tab active" data-tab="inventory">Inventory</button>
         <button class="tab" data-tab="market">Market</button>
         <button class="tab" data-tab="ladder">Ladder</button>
+        <button class="tab" data-tab="todo">TODO <span id="todo-badge" class="tab-badge hidden"></span></button>
       </nav>
 
       <!-- ===== INVENTORY TAB ===== -->
@@ -199,6 +200,23 @@
 
             <h3>All Matches</h3>
             <div id="l-allmatches"></div>
+          </section>
+        </div>
+      </div>
+
+      <div id="tab-todo" class="tabpane hidden">
+        <div class="columns">
+          <section class="card">
+            <h2>To-do</h2>
+            <ul id="todo-list" class="todo-list"></ul>
+
+            <h3>Deliveries <span class="muted">— hand off / pick up cards within 2 days of a trade</span></h3>
+            <div id="todo-deliveries"></div>
+          </section>
+          <section class="card">
+            <h2>Schedule</h2>
+            <p class="muted">Auction phase deadlines and your scheduled ladder games.</p>
+            <div id="todo-schedule"></div>
           </section>
         </div>
       </div>

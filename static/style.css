@@ -533,6 +533,26 @@ table.cal .cal-day { white-space: nowrap; color: var(--muted); padding-right: 0.
 .cal-chip:disabled { opacity: 0.3; cursor: default; }
 .cal-chip .cal-time { opacity: 0.7; font-size: 0.92em; }
 .cal-chip.on .cal-time { opacity: 0.85; }
+
+/* ---- TODO tab ---- */
+.tab-badge { display: inline-block; min-width: 1.2em; padding: 0 0.3em; margin-left: 0.2em; border-radius: 999px; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 700; text-align: center; }
+.todo-list { list-style: none; padding: 0; margin: 0 0 0.5rem; }
+.todo-item { padding: 0.3rem 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+.todo-item:last-child { border-bottom: 0; }
+.todo-item.open { color: var(--ink); }
+.todo-item.done { color: var(--muted); }
+.todo-item.done::first-letter { color: var(--buy); }
+.delivery-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem; padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
+.delivery-row:last-child { border-bottom: 0; }
+.delivery-status { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+.delivery-note { flex-basis: 100%; }
+.delivery-status .ok { color: var(--buy); }
+.delivery-status .reversed { color: var(--sell); }
+.delivery-status .overdue { color: var(--sell); font-weight: 700; }
+.sched-row { padding: 0.3rem 0; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+.sched-row:last-child { border-bottom: 0; }
+.dstat-received { color: var(--buy); }
+.dstat-reversed { color: var(--sell); }
 .gpw-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
 .gpw-row input { width: 4rem; }
 .matchcard { border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.8rem; margin-bottom: 0.6rem; background: var(--panel2); }

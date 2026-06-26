@@ -148,6 +148,7 @@ function render() {
   renderTrades();
   renderPlan();
   renderGallery();
+  renderTodo();
   if (modalCardId !== null) renderModalInfo();
 
   const live = isTrading(state);
@@ -310,6 +311,113 @@ function localTimeLabel(epoch) {
   return new Date(epoch * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+// ---- TODO tab: checklist, deliveries, and the combined schedule ----
+function renderTodo() {
+  renderTodoChecklist();
+  renderDeliveries();
+  renderTodoSchedule();
+}
+
+// Action items the player still needs to handle (used for the list and badge).
+function todoActions() {
+  const me = state && state.me;
+  if (me == null) return [];
+  const items = [];
+  if (!state.my_has_password) items.push({ text: "Set a login password so you can log in by name", done: false });
+  if (state.phase === "primary") items.push({ text: "Acquire your cards — the bank is issuing them in the primary phase", done: false });
+  const ds = state.my_deliveries || [];
+  const incoming = ds.filter((d) => d.buyer === me && d.status === "pending").length;
+  const outgoing = ds.filter((d) => d.seller === me && d.status === "pending").length;
+  if (incoming) items.push({ text: `Confirm ${incoming} delivery${incoming === 1 ? "" : " deliveries"} you've received`, done: false });
+  if (outgoing) items.push({ text: `Hand off ${outgoing} card lot${outgoing === 1 ? "" : "s"} to buyers before the deadline`, done: false });
+  if (state.phase === "secondary" || state.phase === "finished") {
+    const hasAvail = !!(ladder && (ladder.my_availability || []).length);
+    items.push({ text: "Set your ladder availability so games get scheduled", done: hasAvail });
+  }
+  return items;
+}
+
+function renderTodoChecklist() {
+  const ul = $("todo-list");
+  if (!ul) return;
+  if (!state || state.me == null) { ul.innerHTML = `<li class="muted">Log in to see your to-do list.</li>`; return; }
+  const items = todoActions();
+  const open = items.filter((i) => !i.done).length;
+  const badge = $("todo-badge");
+  badge.textContent = open ? String(open) : "";
+  badge.classList.toggle("hidden", open === 0);
+  ul.innerHTML = items.length
+    ? items.map((i) => `<li class="todo-item ${i.done ? "done" : "open"}">${i.done ? "✓" : "○"} ${esc(i.text)}</li>`).join("")
+    : `<li class="muted">All caught up — nothing to do right now.</li>`;
+}
+
+function deliveryDue(d) {
+  if (d.status !== "pending") return "";
+  const now = (state && state.server_now) || Math.floor(Date.now() / 1000);
+  const rem = d.deadline - now;
+  if (rem <= 0) return `<span class="overdue">overdue</span>`;
+  const days = Math.floor(rem / 86400), hrs = Math.floor((rem % 86400) / 3600);
+  return `<span class="muted">due in ${days > 0 ? days + "d " : ""}${hrs}h</span>`;
+}
+
+function renderDeliveries() {
+  const box = $("todo-deliveries");
+  if (!box) return;
+  const me = state && state.me;
+  if (me == null) { box.innerHTML = `<p class="muted">Log in to see your deliveries.</p>`; return; }
+  const ds = state.my_deliveries || [];
+  if (!ds.length) { box.innerHTML = `<p class="muted">No deliveries yet — they appear when your orders fill.</p>`; return; }
+  const row = (d, incoming) => {
+    const other = incoming ? d.seller_name : d.buyer_name;
+    const status = d.status === "pending" ? deliveryDue(d)
+      : d.status === "received" ? `<span class="ok">received</span>`
+      : `<span class="reversed">reversed</span>`;
+    const action = incoming && d.status === "pending"
+      ? `<button class="buy d-receive" data-id="${d.id}">Mark received</button>` : "";
+    const note = d.note ? `<div class="muted delivery-note">${esc(d.note)}</div>` : "";
+    return `<div class="delivery-row"><div class="delivery-what"><b>${d.qty}× ${esc(d.card_name)}</b> ` +
+      `<span class="muted">${incoming ? "from" : "to"} ${esc(other)} · ${fmtUSD(d.total)}</span></div>` +
+      `<div class="delivery-status">${status} ${action}</div>${note}</div>`;
+  };
+  const incoming = ds.filter((d) => d.buyer === me);
+  const outgoing = ds.filter((d) => d.seller === me);
+  let html = "";
+  if (incoming.length) html += `<h4>To pick up <span class="muted">— confirm once you have the cards</span></h4>` + incoming.map((d) => row(d, true)).join("");
+  if (outgoing.length) html += `<h4>To deliver <span class="muted">— hand the cards over before the deadline</span></h4>` + outgoing.map((d) => row(d, false)).join("");
+  box.innerHTML = html;
+}
+
+function renderTodoSchedule() {
+  const box = $("todo-schedule");
+  if (!box || !state) return;
+  let html = "";
+  if (isTrading(state)) {
+    const when = state.round_deadline
+      ? `closes ${fmtSlot(state.round_deadline)}`
+      : `closes when the host clicks`;
+    html += `<div class="sched-row"><b>${phaseLabel(state.phase)}</b> · round ${state.round} of ${state.total_rounds} — ${when}</div>`;
+  } else if (state.phase === "finished") {
+    html += `<div class="sched-row muted">The auction is finished.</div>`;
+  }
+  const me = state.me;
+  if (me != null) {
+    if (state.phase === "primary") {
+      html += `<div class="sched-row muted">Ladder games begin after the primary phase.</div>`;
+    } else if (state.phase === "secondary" || state.phase === "finished") {
+      const mine = ((ladder && ladder.matches) || [])
+        .filter((m) => (m.a === me || m.b === me) && m.status === "scheduled")
+        .sort((a, b) => a.slot_start - b.slot_start);
+      html += mine.length
+        ? `<h4>Your upcoming games</h4>` + mine.map((m) => {
+            const opp = m.a === me ? m.b_name : m.a_name;
+            return `<div class="sched-row">🎲 vs <b>${esc(opp)}</b> · ${fmtSlot(m.slot_start)}</div>`;
+          }).join("")
+        : `<div class="sched-row muted">No games scheduled — set your availability on the Ladder tab.</div>`;
+    }
+  }
+  box.innerHTML = html || `<p class="muted">Nothing scheduled.</p>`;
+}
+
 function renderLadder() {
   if (!ladder) return;
 
@@ -324,6 +432,7 @@ function renderLadder() {
   renderCalendar();
   renderMyMatches();
   renderAllMatches();
+  renderTodo(); // schedule section depends on ladder data
 
   // ELO standings.
   const tb = $("t-standings").querySelector("tbody");
@@ -873,7 +982,16 @@ $$(".tab").forEach((t) => (t.onclick = () => {
   $("tab-inventory").classList.toggle("hidden", activeTab !== "inventory");
   $("tab-market").classList.toggle("hidden", activeTab !== "market");
   $("tab-ladder").classList.toggle("hidden", activeTab !== "ladder");
+  $("tab-todo").classList.toggle("hidden", activeTab !== "todo");
 }));
+
+// Confirm receipt of an incoming delivery.
+$("todo-deliveries").addEventListener("click", async (e) => {
+  const b = e.target.closest(".d-receive");
+  if (!b) return;
+  try { await api("/api/deliveries/receive", "POST", { delivery_id: Number(b.dataset.id) }); await refresh(); }
+  catch (err) { toastError(err.message); }
+});
 
 // Filter bars
 $$(".filters").forEach((box) => {

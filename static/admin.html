@@ -213,6 +213,18 @@
       <div id="manage-error" class="error"></div>
     </section>
 
+    <section id="deliveries-card" class="card hidden">
+      <h2>Deliveries <span class="muted">(settlement)</span></h2>
+      <p class="muted">Every trade's hand-off. A missed deadline auto-reverses the trade and penalises the seller; you can reverse one manually to fix an error (no penalty).</p>
+      <div id="deliveries-error" class="error"></div>
+      <table id="deliveries-table" class="grid">
+        <thead>
+          <tr><th>Card</th><th class="num">Qty</th><th>Seller</th><th>Buyer</th><th class="num">Value</th><th>Status</th><th>Deadline</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
     <section id="ladder-card" class="card hidden">
       <h2>ELO Ladder <span class="muted">(matches auto-schedule from player availability)</span></h2>
       <div id="ladder-info" class="muted"></div>

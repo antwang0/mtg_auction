@@ -73,7 +73,7 @@ header) so you can log in by name from any browser without juggling the token.
 ⚠️ **Don't reuse a real password** — this site's security is deliberately light
 (see [Auth](#auth)), and the password is only lightly protected.
 
-The player page has three tabs:
+The player page has four tabs:
 
 - **Inventory** — your table (holdings, bid/offer tickets with a card-image
   preview, open orders), the player standings and auction results, your own
@@ -89,6 +89,14 @@ The player page has three tabs:
   closest-rated, least-recently-met available players. Report your own results
   (your opponent confirms), cancel a match for an ELO penalty, and watch the ELO
   leaderboard.
+- **TODO** — a personal **checklist** (set a password, acquire your cards in the
+  primary phase, confirm/hand off deliveries, set ladder availability — with a
+  badge of how many are outstanding), your **deliveries** (cards to pick up and
+  confirm, or to hand off before their 2-day deadline, with a countdown and a
+  *Mark received* button), and a **schedule** combining the auction phase/round
+  deadline with your upcoming ladder games. The host gets a matching
+  **Deliveries** panel on `/admin` showing every delivery with a *Reverse*
+  button.
 
 Both tabs filter by **name, rarity, card type, mana value, and owned/wanted**,
 and your filter/sort choices are remembered between visits.
