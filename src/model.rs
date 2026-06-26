@@ -253,6 +253,45 @@ pub struct Trade {
     pub offer: Cents,
 }
 
+/// Lifecycle of a physical card delivery created by a trade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeliveryStatus {
+    /// Awaiting hand-off: the seller must deliver and the buyer confirm receipt.
+    Pending,
+    /// The buyer confirmed receipt — settled.
+    Received,
+    /// The trade was undone (the seller missed the deadline, or an admin fixed an
+    /// error): cards and money were returned.
+    Reversed,
+}
+
+/// A settlement obligation arising from a trade: the `seller` must hand `qty`
+/// copies of `card` to the `buyer` by `deadline`. The buyer marks it received;
+/// if the (non-bank) seller misses the deadline the trade is reversed and they
+/// pay a cash penalty. The bank (`seller == HOUSE_ID`) never defaults.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Delivery {
+    pub id: u64,
+    pub card: CardId,
+    pub card_name: String,
+    pub seller: PlayerId,
+    pub seller_name: String,
+    pub buyer: PlayerId,
+    pub buyer_name: String,
+    pub qty: u32,
+    /// Total cents the buyer paid for this delivery (across the round's fills).
+    pub total: Cents,
+    /// Epoch second the trade settled, and the delivery deadline (created + 2d).
+    pub created: u64,
+    pub deadline: u64,
+    pub status: DeliveryStatus,
+    /// Set when a reversal couldn't fully reclaim the cards (buyer moved them on),
+    /// so an admin can resolve it. Empty otherwise.
+    #[serde(default)]
+    pub note: String,
+}
+
 /// Per-card clearing summary at a round close: the top of book before matching
 /// (so players see how close they were) and what actually traded.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -508,6 +547,11 @@ pub struct Config {
     /// shown in each viewer's local time. Defaults to [`DAY_BLOCKS`].
     #[serde(default = "default_block_hours")]
     pub ladder_block_hours: Vec<u32>,
+    /// Penalty for missing a delivery deadline, as a percentage of the trade's
+    /// total value (rounded up to the next cent), charged to the defaulting
+    /// seller and paid to the bank.
+    #[serde(default = "default_delivery_penalty_pct")]
+    pub delivery_penalty_pct: f64,
 }
 
 fn default_block_hours() -> Vec<u32> {
@@ -515,6 +559,9 @@ fn default_block_hours() -> Vec<u32> {
 }
 fn default_secondary_rounds() -> u32 {
     4
+}
+fn default_delivery_penalty_pct() -> f64 {
+    10.0
 }
 
 fn default_set() -> String {
@@ -570,6 +617,7 @@ impl Default for Config {
             max_games_per_week: default_max_games(),
             schedule_window_days: default_window_days(),
             ladder_block_hours: default_block_hours(),
+            delivery_penalty_pct: default_delivery_penalty_pct(),
         }
     }
 }

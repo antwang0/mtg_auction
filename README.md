@@ -212,6 +212,16 @@ still works offline.
   as they fill: a seller never delivers more copies than they currently hold,
   and a buyer is never pushed past their debt limit — so a balance can never
   drop below `-debt_limit` no matter how the books fill.
+- **Delivery & settlement.** Every trade creates a **delivery obligation**: the
+  seller must hand the buyer the cards by a **deadline 2 days after the trade**.
+  The **buyer marks it received** to settle it. If a (non-bank) seller misses the
+  deadline the trade is **automatically reversed** — cards and money are returned
+  (best effort: only cards the buyer still holds are reclaimed, and a shortfall is
+  flagged for the host) — and the seller pays a **penalty** of
+  `delivery_penalty_pct`% of the trade value (rounded up to the next cent) to the
+  bank. The **bank never defaults** (buying from the bank is a *retrieve*, not a
+  delivery that can fail). The **host sees every delivery and can reverse one** to
+  fix an error (no penalty).
 - **End.** After the secondary phase's last round closes the game is finished.
 - **Limits.** Order price/quantity and the setup configuration are bounded
   (e.g. price ≤ $1,000,000, ≤ 100k copies, ≤ 100k cards opened) so absurd
@@ -313,6 +323,8 @@ network, not the open internet.
 | `POST /api/bid`   | player token | `{player, card, qty, price}` | Place/replace/cancel a bid. |
 | `POST /api/offer` | player token | `{player, card, qty, price}` | Place/replace/cancel an offer. |
 | `POST /api/close` | host token | – | Match the current round and advance. |
+| `POST /api/deliveries/receive` | player token | `{delivery_id}` | The buyer marks one of their deliveries received (settling it). |
+| `POST /api/deliveries/reverse` | host token | `{delivery_id}` | Host reverses a delivery to fix an error (no penalty). |
 | `POST /api/cards/add` | host token | `{card_list}` | Add cards (from a list) to the house inventory mid-game. |
 | `POST /api/players/add` | host token | `{name}` | Add a player mid-game; deals them from the house and returns `{player, name, token}`. |
 | `POST /api/house/offer` | host token | – | List the house's cards into the auction at a noisy reference price; returns `{listed}`. |
@@ -329,7 +341,8 @@ network, not the open internet.
 `mana_cost` and `supply` (copies in circulation, including the house), used by
 the market and planning views. State also carries the unallocated `house`
 inventory and `house_balance`, and for the logged-in player their own
-`my_trades` (personal trade history) and `my_has_password`. Errors come back as
+`my_trades` (personal trade history), `my_has_password`, and `my_deliveries` (the
+player's pending/settled deliveries; the host also gets `all_deliveries`). Errors come back as
 `{ "error": "..." }` with HTTP 400 (bad input) or 401 (auth). Prices and money
 are in cents. (The want list is purely client-side — stored in the browser,
 never sent to the server.)

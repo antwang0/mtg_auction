@@ -250,13 +250,16 @@ pub async fn timer_loop(state: AppState) {
             let due = matches!(game.phase, Phase::Primary | Phase::Secondary)
                 && game.round_deadline.is_some_and(|dl| now_epoch() >= dl);
             if due {
-                let _ = game.close_round();
+                if let Ok(result) = game.close_round() {
+                    game.record_deliveries(&result, now_epoch());
+                }
                 game.arm_timer(now_epoch());
             }
             let ladder_changed = if tick.is_multiple_of(LADDER_TICK_SECS) {
                 let expired = game.expire_stale_matches(now_epoch());
                 let scheduled = game.auto_schedule(now_epoch());
-                expired > 0 || scheduled > 0
+                let reversed = game.expire_overdue_deliveries(now_epoch());
+                expired > 0 || scheduled > 0 || reversed > 0
             } else {
                 false
             };

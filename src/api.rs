@@ -35,6 +35,8 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/bid", post(place_bid))
         .route("/api/offer", post(place_offer))
         .route("/api/close", post(close_round))
+        .route("/api/deliveries/receive", post(receive_delivery))
+        .route("/api/deliveries/reverse", post(reverse_delivery))
         .route("/api/cards/add", post(add_cards))
         .route("/api/players/add", post(add_player))
         .route("/api/house/offer", post(offer_house))
@@ -190,6 +192,11 @@ pub struct StateView {
     round_deadline: Option<u64>,
     round_seconds: u32,
     server_now: u64,
+    /// Deliveries involving the logged-in player (as buyer or seller). Empty when
+    /// not logged in.
+    my_deliveries: Vec<Delivery>,
+    /// Every delivery in the game — populated only for the host (else empty).
+    all_deliveries: Vec<Delivery>,
 }
 
 fn holdings_of(game: &Game, p: &Player) -> Vec<HoldingView> {
@@ -269,6 +276,12 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
     };
     let my_trades = me.map(|id| player_trade_views(&game, id)).unwrap_or_default();
     let my_has_password = me.is_some_and(|id| game.has_password(id));
+    let my_deliveries: Vec<Delivery> = match me {
+        Some(id) => game.deliveries.iter().filter(|d| d.buyer == id || d.seller == id).cloned().collect(),
+        None => Vec::new(),
+    };
+    let all_deliveries: Vec<Delivery> =
+        if game.is_admin(&token) { game.deliveries.clone() } else { Vec::new() };
     let (my_committed, my_available) = match me {
         Some(id) => {
             let committed = game.committed(id);
@@ -313,6 +326,8 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
         round_deadline: game.round_deadline,
         round_seconds: game.round_seconds(),
         server_now: now_epoch(),
+        my_deliveries,
+        all_deliveries,
     })
 }
 
@@ -550,11 +565,41 @@ pub async fn close_round(State(state): State<AppState>, headers: HeaderMap) -> R
             return Err(ApiError::unauthorized("only the host can close the auction"));
         }
         let result = game.close_round()?;
+        game.record_deliveries(&result, now_epoch());
         game.arm_timer(now_epoch());
         result
     };
     state.save_and_notify().await;
     Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+pub struct DeliveryRequest {
+    delivery_id: u64,
+}
+
+/// The buyer marks one of their deliveries received (settling it).
+pub async fn receive_delivery(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<DeliveryRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        let me = require_player(&game, &headers)?;
+        game.mark_delivery_received(me, req.delivery_id)?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Host: reverse a delivery to correct an error (no penalty).
+pub async fn reverse_delivery(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<DeliveryRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can reverse a delivery"));
+        }
+        game.reverse_delivery(req.delivery_id)?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[derive(Serialize)]
