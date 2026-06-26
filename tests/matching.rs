@@ -9,11 +9,13 @@ fn base_config() -> Config {
         set: "sample".into(),
         starting_money: 100,
         debt_limit: 0,
-        rounds: 3,
+        primary_rounds: 3,
+        secondary_rounds: 1,
         num_packs: 2,
         pack_size: 15,
         seed: 7,
-        round_seconds: 0,
+        primary_round_seconds: 0,
+        secondary_round_seconds: 0,
         ..Config::default()
     }
 }
@@ -38,7 +40,7 @@ fn card1(g: &Game) -> u32 {
 #[test]
 fn setup_deals_all_cards_and_money() {
     let g = Game::setup(base_config(), CardPool::sample()).unwrap();
-    assert_eq!(g.phase, Phase::Bidding);
+    assert_eq!(g.phase, Phase::Primary);
     assert_eq!(g.round, 1);
 
     let total_cards: u32 = g.players.values().map(|p| p.holdings.values().sum::<u32>()).sum();
@@ -277,17 +279,21 @@ fn clears_record_top_of_book_even_without_a_fill() {
 }
 
 #[test]
-fn rounds_advance_then_finish() {
-    let mut g = controlled_game(); // 3 rounds
-    assert_eq!(g.round, 1);
+fn rounds_advance_through_both_phases_then_finish() {
+    // base_config: 3 primary rounds, then 1 secondary round.
+    let mut g = controlled_game();
+    assert_eq!((g.phase, g.round), (Phase::Primary, 1));
     g.close_round().unwrap();
-    assert_eq!(g.round, 2);
-    assert_eq!(g.phase, Phase::Bidding);
+    assert_eq!((g.phase, g.round), (Phase::Primary, 2));
     g.close_round().unwrap();
-    assert_eq!(g.round, 3);
+    assert_eq!((g.phase, g.round), (Phase::Primary, 3));
+    // Closing the last primary round opens the secondary phase at round 1.
+    g.close_round().unwrap();
+    assert_eq!((g.phase, g.round), (Phase::Secondary, 1));
+    // Closing the last secondary round ends the game.
     g.close_round().unwrap();
     assert_eq!(g.phase, Phase::Finished);
-    assert!(g.close_round().is_err(), "no bidding after the game ends");
+    assert!(g.close_round().is_err(), "no trading after the game ends");
 }
 
 #[test]
@@ -376,18 +382,17 @@ fn arm_timer_sets_and_clears_deadline() {
     g.arm_timer(1000);
     assert_eq!(g.round_deadline, None);
 
-    // With a timer, the deadline is now + round_seconds while bidding...
+    // With a timer, the deadline is now + the phase's round timer while trading...
     let mut cfg = base_config();
-    cfg.round_seconds = 30;
+    cfg.primary_round_seconds = 30;
     let mut g = Game::setup(cfg, CardPool::sample()).unwrap();
     g.arm_timer(1000);
     assert_eq!(g.round_deadline, Some(1030));
 
     // ...and clears once the game is finished.
-    for _ in 0..3 {
+    while g.phase != Phase::Finished {
         g.close_round().unwrap();
     }
-    assert_eq!(g.phase, Phase::Finished);
     g.arm_timer(2000);
     assert_eq!(g.round_deadline, None);
 }

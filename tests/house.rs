@@ -10,7 +10,7 @@ fn cfg() -> Config {
         set: "sample".into(),
         starting_money: 1_000_000, // plenty to buy from the house
         debt_limit: 0,
-        rounds: 5,
+        primary_rounds: 5,
         num_packs: 4,
         pack_size: 15,
         seed: 11,

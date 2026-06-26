@@ -11,11 +11,11 @@ fn cfg() -> Config {
         set: "sample".into(),
         starting_money: 10_000,
         debt_limit: 0,
-        rounds: 3,
+        primary_rounds: 3,
         num_packs: 1,
         pack_size: 6,
         seed: 1,
-        round_seconds: 0,
+        primary_round_seconds: 0,
         ..Config::default()
     }
 }
@@ -40,7 +40,7 @@ fn game_survives_save_and_reload() {
     // A fresh App pointed at the same file resumes the game.
     let app2 = App::new(Some(path.clone()));
     let g2 = app2.game.lock().unwrap();
-    assert_eq!(g2.phase, Phase::Bidding);
+    assert_eq!(g2.phase, Phase::Primary);
     assert_eq!(g2.round, 1);
     assert_eq!(g2.players.len(), 2);
     assert_eq!(g2.tokens[&1], token, "tokens persist so players stay logged in");

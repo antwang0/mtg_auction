@@ -13,11 +13,13 @@ fn config(seed: u64, debt: i64) -> Config {
         set: "sample".into(),
         starting_money: 100_000, // $1,000 each
         debt_limit: debt,
-        rounds: 10_000, // effectively never auto-finish during the test
+        // Effectively never auto-finish either phase during the test.
+        primary_rounds: 10_000,
+        secondary_rounds: 10_000,
         num_packs: 1,
         pack_size: 8,
         seed,
-        round_seconds: 0,
+        primary_round_seconds: 0,
         ..Config::default()
     }
 }

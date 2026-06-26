@@ -31,6 +31,11 @@ const KNOWN_TYPES = ["Creature", "Planeswalker", "Instant", "Sorcery", "Artifact
 function fmtMV(cmc) { return cmc === null || cmc === undefined ? "—" : String(cmc); }
 function shortType(tl) { if (!tl) return "—"; const i = tl.indexOf("—"); return (i >= 0 ? tl.slice(0, i) : tl).trim(); }
 function mineOf(c) { return myQty[c.id] || 0; }
+// The two trading phases (orders are open); see also phaseLabel.
+function isTrading(s) { return !!s && (s.phase === "primary" || s.phase === "secondary"); }
+function phaseLabel(p) {
+  return p === "primary" ? "Primary (bank issue)" : p === "secondary" ? "Secondary (trading)" : p;
+}
 function loadWants() { try { return new Set(JSON.parse(localStorage.getItem(WANTS_KEY) || "[]")); } catch { return new Set(); } }
 function saveWants() { localStorage.setItem(WANTS_KEY, JSON.stringify([...wants])); }
 function star(name) { return wants.has(name) ? "★" : "☆"; }
@@ -95,8 +100,8 @@ function render() {
   buildMaps(meView);
 
   if (!inGame) $("status").textContent = "No game in progress.";
-  else if (state.phase === "finished") $("status").textContent = `${state.set_name} — game over after ${state.total_rounds} rounds.`;
-  else $("status").textContent = `${state.set_name} — round ${state.round} of ${state.total_rounds} — debt limit ${fmtUSD(state.debt_limit)}`;
+  else if (state.phase === "finished") $("status").textContent = `${state.set_name} — game over.`;
+  else $("status").textContent = `${state.set_name} — ${phaseLabel(state.phase)} · round ${state.round} of ${state.total_rounds} — debt limit ${fmtUSD(state.debt_limit)}`;
 
   // Per-round results toast when a new round closes.
   const histLen = state.history.length;
@@ -145,7 +150,7 @@ function render() {
   renderGallery();
   if (modalCardId !== null) renderModalInfo();
 
-  const live = state.phase === "bidding";
+  const live = isTrading(state);
   $$("#bid-form button, #offer-form button").forEach((b) => (b.disabled = !live));
 }
 
@@ -673,7 +678,7 @@ function modalAfford() {
   const c = cardById[modalCardId];
   if (!c) return;
   const loggedIn = state && state.me != null;
-  const live = state && state.phase === "bidding";
+  const live = isTrading(state);
   const qty = Math.max(0, Number($("m-qty").value) || 0);
   const price = toCents($("m-price").value);
   const commit = qty * price;
@@ -909,7 +914,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 // ---- timer countdown ----
 function tickTimer() {
   const el = $("round-timer");
-  if (!state || state.phase !== "bidding" || !timerDeadline) { el.textContent = ""; el.classList.remove("urgent"); return; }
+  if (!isTrading(state) || !timerDeadline) { el.textContent = ""; el.classList.remove("urgent"); return; }
   const rem = timerDeadline - (Math.floor(Date.now() / 1000) + clockSkew);
   if (rem <= 0) { el.textContent = "⏱ closing…"; el.classList.add("urgent"); return; }
   const m = Math.floor(rem / 60), s = rem % 60;

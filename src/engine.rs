@@ -167,8 +167,8 @@ impl Game {
         if config.player_names.iter().any(|n| n.trim().is_empty()) {
             return Err("player names cannot be empty".into());
         }
-        if config.rounds == 0 {
-            return Err("need at least 1 round".into());
+        if config.primary_rounds == 0 || config.secondary_rounds == 0 {
+            return Err("each phase needs at least 1 round".into());
         }
         // A manual pool deals its listed cards directly, so the pack settings
         // don't apply to it; for a set-drafted pool they must be sensible.
@@ -186,8 +186,8 @@ impl Game {
         if config.player_names.len() > 64 {
             return Err("too many players (max 64)".into());
         }
-        if config.rounds > 10_000 {
-            return Err("too many rounds (max 10000)".into());
+        if config.primary_rounds > 10_000 || config.secondary_rounds > 10_000 {
+            return Err("too many rounds (max 10000 per phase)".into());
         }
         if !manual && config.num_packs as u64 * config.pack_size as u64 > 100_000 {
             return Err("too many cards opened — reduce packs or pack size".into());
@@ -324,7 +324,7 @@ impl Game {
         }
         let admin_id = player_order[0];
 
-        Ok(Game {
+        let mut game = Game {
             config,
             set_name: pool.set_name,
             cards,
@@ -336,7 +336,7 @@ impl Game {
             tokens,
             admin_id,
             round: 1,
-            phase: Phase::Bidding,
+            phase: Phase::Primary,
             history: Vec::new(),
             order_log: Vec::new(),
             order_seq: 0,
@@ -344,18 +344,38 @@ impl Game {
             ladder: Ladder::default(),
             house,
             passwords: HashMap::new(),
-        })
+        };
+        // Primary issue: the bank lists all its leftover (unallocated) cards into
+        // the auction so players can acquire them in the primary phase.
+        let _ = game.offer_house_cards(&mut rng);
+        Ok(game)
     }
 
-    /// (Re)arm the round timer from the configured `round_seconds`, given the
-    /// current epoch second. Clears the deadline when there's no timer or the
+    /// The auto-close timer (seconds) for the phase currently open, or 0 if that
+    /// phase closes only on a manual host action.
+    pub fn round_seconds(&self) -> u32 {
+        match self.phase {
+            Phase::Primary => self.config.primary_round_seconds,
+            Phase::Secondary => self.config.secondary_round_seconds,
+            _ => 0,
+        }
+    }
+
+    /// How many rounds the phase currently open runs in total.
+    pub fn phase_rounds(&self) -> u32 {
+        match self.phase {
+            Phase::Primary => self.config.primary_rounds,
+            Phase::Secondary => self.config.secondary_rounds,
+            _ => 0,
+        }
+    }
+
+    /// (Re)arm the round timer from the current phase's configured timer, given
+    /// the current epoch second. Clears the deadline when there's no timer or the
     /// game isn't taking orders.
     pub fn arm_timer(&mut self, now_epoch: u64) {
-        self.round_deadline = if self.phase == Phase::Bidding && self.config.round_seconds > 0 {
-            Some(now_epoch + self.config.round_seconds as u64)
-        } else {
-            None
-        };
+        let secs = self.round_seconds();
+        self.round_deadline = if secs > 0 { Some(now_epoch + secs as u64) } else { None };
     }
 
     /// Total value a player has committed to resting bids.
@@ -441,9 +461,9 @@ impl Game {
         self.player_for_token(token) == Some(self.admin_id)
     }
 
-    fn require_bidding(&self) -> Result<(), String> {
+    fn require_trading(&self) -> Result<(), String> {
         match self.phase {
-            Phase::Bidding => Ok(()),
+            Phase::Primary | Phase::Secondary => Ok(()),
             Phase::Setup => Err("no game in progress".into()),
             Phase::Finished => Err("the game is over".into()),
         }
@@ -462,7 +482,7 @@ impl Game {
     /// Place or replace a bid. A bid may be for any card. The player's total
     /// resting bids may not commit them past `balance + debt_limit`.
     pub fn place_bid(&mut self, player: PlayerId, card: CardId, qty: u32, price: Cents) -> Result<(), String> {
-        self.require_bidding()?;
+        self.require_trading()?;
         let p = self.players.get(&player).ok_or("no such player")?;
         if !self.cards.contains_key(&card) {
             return Err("no such card".into());
@@ -495,7 +515,7 @@ impl Game {
     /// Place or replace an offer. A player may only offer cards they currently
     /// hold, and cannot offer more copies than they hold.
     pub fn place_offer(&mut self, player: PlayerId, card: CardId, qty: u32, price: Cents) -> Result<(), String> {
-        self.require_bidding()?;
+        self.require_trading()?;
         let p = self.players.get(&player).ok_or("no such player")?;
         if !self.cards.contains_key(&card) {
             return Err("no such card".into());
@@ -523,7 +543,7 @@ impl Game {
     /// trades, and advance the round. Unmatched (and partially filled) orders
     /// rest and carry over to the next round.
     pub fn close_round(&mut self) -> Result<RoundResult, String> {
-        self.require_bidding()?;
+        self.require_trading()?;
 
         let cards: Vec<CardId> = self.card_order.clone();
 
@@ -564,8 +584,17 @@ impl Game {
         let result = RoundResult { round: self.round, trades, clears };
         self.history.push(result.clone());
 
-        if self.round >= self.config.rounds {
-            self.phase = Phase::Finished;
+        if self.round >= self.phase_rounds() {
+            match self.phase {
+                // Primary done → secondary: the bank withdraws its remaining
+                // offers (keeping the unsold cards) and players trade each other.
+                Phase::Primary => {
+                    self.withdraw_house_offers();
+                    self.phase = Phase::Secondary;
+                    self.round = 1;
+                }
+                _ => self.phase = Phase::Finished,
+            }
         } else {
             self.round += 1;
         }
@@ -828,8 +857,22 @@ impl Game {
     /// each card's reference price plus Gaussian noise (cards without a reference
     /// price are skipped). Replaces any existing house offer on a card. Returns
     /// how many cards were listed.
+    /// Cancel every resting house offer (the bank keeps the cards). Used at the
+    /// primary→secondary transition so the bank stops selling.
+    fn withdraw_house_offers(&mut self) {
+        let cards: Vec<CardId> =
+            self.offers.keys().filter(|(p, _)| *p == HOUSE_ID).map(|(_, c)| *c).collect();
+        for card in cards {
+            if let Some(o) = self.offers.remove(&(HOUSE_ID, card)) {
+                self.record(OrderKind::Offer, OrderAction::Cancel, HOUSE_ID, card, o.qty, o.price);
+            }
+        }
+    }
+
     pub fn offer_house_cards(&mut self, rng: &mut Rng) -> Result<usize, String> {
-        self.require_bidding()?;
+        if self.phase != Phase::Primary {
+            return Err("the bank only issues cards during the primary phase".into());
+        }
         let stdev = self.config.house_offer_stdev_pct;
         let cap = self.config.house_offer_cap_pct;
         let cards: Vec<CardId> = self.house.holdings.keys().copied().collect();

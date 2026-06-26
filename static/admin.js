@@ -6,6 +6,12 @@ let state = null;
 let timerDeadline = null;
 let clockSkew = 0;
 
+// Trading phases (orders open) vs. setup/finished; and a display label.
+function isTrading(s) { return !!s && (s.phase === "primary" || s.phase === "secondary"); }
+function phaseLabel(p) {
+  return p === "primary" ? "Primary (bank issue)" : p === "secondary" ? "Secondary (trading)" : p;
+}
+
 function toast(html, kind) {
   const t = document.createElement("div");
   t.className = "toast" + (kind ? " " + kind : "");
@@ -68,9 +74,9 @@ function render() {
   if (!inGame) {
     $("status").textContent = "No game in progress.";
   } else if (state.phase === "finished") {
-    $("status").textContent = `${state.set_name} — finished after ${state.total_rounds} rounds.`;
+    $("status").textContent = `${state.set_name} — finished.`;
   } else {
-    $("status").textContent = `${state.set_name} — round ${state.round} of ${state.total_rounds}`;
+    $("status").textContent = `${state.set_name} — ${phaseLabel(state.phase)} · round ${state.round} of ${state.total_rounds}`;
   }
 
   // Warn that running setup again replaces the live game (see btn-setup).
@@ -97,8 +103,8 @@ function render() {
     $("round-info").textContent =
       state.phase === "finished"
         ? "The game is over."
-        : `Round ${state.round} of ${state.total_rounds} is open for orders${timer}.`;
-    $("btn-close").disabled = state.phase !== "bidding";
+        : `${phaseLabel(state.phase)} · round ${state.round} of ${state.total_rounds} is open for orders${timer}.`;
+    $("btn-close").disabled = !isTrading(state);
   }
 
   timerDeadline = state.round_deadline ?? null;
@@ -108,7 +114,7 @@ function render() {
 
 function tickTimer() {
   const el = $("round-timer");
-  if (!state || state.phase !== "bidding" || !timerDeadline) { el.textContent = ""; return; }
+  if (!isTrading(state) || !timerDeadline) { el.textContent = ""; return; }
   const rem = timerDeadline - (Math.floor(Date.now() / 1000) + clockSkew);
   if (rem <= 0) { el.textContent = "⏱ closing…"; el.classList.add("urgent"); return; }
   const m = Math.floor(rem / 60), s = rem % 60;
@@ -370,6 +376,15 @@ function addPlayerRow(name = "", focus = false) {
 $("btn-add-player-row").onclick = () => addPlayerRow("", true);
 ["Alice", "Bob", "Carol", "Dave"].forEach((n) => addPlayerRow(n));
 
+// A round timer entered as a number + a unit (min/hours/days) → whole seconds.
+// `id` is the number input; its unit <select> is `${id}-unit` (value = seconds
+// per unit). 0 means "manual close only".
+function durationSeconds(id) {
+  const n = Math.max(0, Number($(id).value) || 0);
+  const per = Number($(id + "-unit").value) || 60;
+  return Math.round(n * per);
+}
+
 // The ladder block hours are entered in the host's local time but stored as
 // fixed UTC hours (so every viewer can render them in their own timezone).
 // Convert a "HH:MM" local value to the equivalent whole UTC hour.
@@ -398,12 +413,13 @@ updateBlockHint();
 function setupPreview() {
   const pool = selectedPool();
   const names = playerNames();
-  const rounds = Number($("cfg-rounds").value);
+  const primaryRounds = Number($("cfg-primary-rounds").value);
+  const secondaryRounds = Number($("cfg-secondary-rounds").value);
   const problems = [];
 
   if (names.length < 2) problems.push("add at least 2 players");
   if (new Set(names.map((n) => n.toLowerCase())).size !== names.length) problems.push("player names must be unique");
-  if (!(rounds >= 1)) problems.push("need at least 1 round");
+  if (!(primaryRounds >= 1) || !(secondaryRounds >= 1)) problems.push("each phase needs at least 1 round");
 
   let opened = null, openedLabel = "opened";
   if (pool === "manual") {
@@ -594,8 +610,10 @@ $("btn-setup").onclick = async () => {
     card_list: $("cfg-cardlist").value,
     starting_money: toCents($("cfg-money").value),
     debt_limit: toCents($("cfg-debt").value),
-    rounds: Number($("cfg-rounds").value),
-    round_seconds: Number($("cfg-timer").value),
+    primary_rounds: Number($("cfg-primary-rounds").value),
+    secondary_rounds: Number($("cfg-secondary-rounds").value),
+    primary_round_seconds: durationSeconds("cfg-primary-timer"),
+    secondary_round_seconds: durationSeconds("cfg-secondary-timer"),
     num_packs: Number($("cfg-packs").value),
     pack_size: Number($("cfg-packsize").value),
     seed: Number($("cfg-seed").value),

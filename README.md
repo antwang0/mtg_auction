@@ -192,9 +192,18 @@ still works offline.
   debt. With `debt_limit = 0`, total bids can't exceed your money at all. Your
   table shows how much you have **committed** to resting bids vs. **available**
   to bid.
-- **Round timer.** If `round_seconds > 0`, each round auto-closes that many
-  seconds after it opens (a countdown shows in the header); the host can still
-  close early. `0` means rounds close only when the host clicks.
+- **Two phases.** The auction runs a **primary** phase then a **secondary**
+  phase, each with its own round count and timer. In **primary**, the *bank*
+  (house) lists all its unallocated cards into the auction so players acquire
+  them; when the primary rounds finish the bank **withdraws its remaining
+  offers** (keeping the unsold cards) and the **secondary** phase opens, where
+  players trade only with each other. The game finishes after the secondary
+  rounds close.
+- **Round timer.** Each phase has its own timer, set on the New Game form as a
+  number plus a unit (**minutes / hours / days**). If it's `> 0`, each round of
+  that phase auto-closes that long after it opens (a countdown shows in the
+  header); the host can still close early. `0` means rounds close only when the
+  host clicks.
 - **Matching (per card, at round close).** The highest bid is paired with the
   lowest offer. If they **cross** (bid ≥ offer) they trade at the **mid price**
   `(bid + offer) / 2` (rounded to the nearest cent, half up). This repeats until
@@ -203,7 +212,7 @@ still works offline.
   as they fill: a seller never delivers more copies than they currently hold,
   and a buyer is never pushed past their debt limit — so a balance can never
   drop below `-debt_limit` no matter how the books fill.
-- **End.** After `rounds` closes the game is finished.
+- **End.** After the secondary phase's last round closes the game is finished.
 - **Limits.** Order price/quantity and the setup configuration are bounded
   (e.g. price ≤ $1,000,000, ≤ 100k copies, ≤ 100k cards opened) so absurd
   inputs can't overflow the money arithmetic or exhaust memory.
@@ -221,9 +230,11 @@ self-scheduling **ELO ladder** (the **Ladder** tab). Every player starts at
   New Game form (entered in the host's local time, stored as fixed UTC hours and
   rendered in each viewer's **local timezone**); availability is bounded to a sane
   number of slots per player.
-- **Automatic matchmaking.** Scheduling is **event-driven** — it runs the moment
-  someone changes their availability or weekly target, or frees a slot by
-  cancelling — plus a periodic pass for the passage of time (new days/weeks).
+- **Automatic matchmaking.** Matchmaking **only begins once the primary auction
+  phase is over** (so players have their cards first). Scheduling is then
+  **event-driven** — it runs the moment someone changes their availability or
+  weekly target, or frees a slot by cancelling — plus a periodic pass for the
+  passage of time (new days/weeks).
   Each pass pairs available players by **fewest prior meetings, then closest
   ELO** — avoiding rematches where it can and keeping games competitive — and
   never books a player twice in one slot or past their weekly target. The host

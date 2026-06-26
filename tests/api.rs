@@ -31,7 +31,7 @@ fn setup_body() -> Value {
         "set": "sample",
         "starting_money": 10000,
         "debt_limit": 0,
-        "rounds": 3,
+        "primary_rounds": 3,
         "num_packs": 1,
         "pack_size": 6,
         "seed": 1
@@ -54,7 +54,7 @@ fn setup_body_house() -> Value {
         "pool_source": "sample",
         "starting_money": 1_000_000,
         "debt_limit": 0,
-        "rounds": 3,
+        "primary_rounds": 3,
         "num_packs": 4,
         "pack_size": 6,
         "seed": 1,
@@ -104,7 +104,7 @@ async fn setup_then_state_reports_bidding() {
     setup_game(&c, &base).await;
 
     let post = get_state(&c, &base, None).await;
-    assert_eq!(post["phase"], "bidding");
+    assert_eq!(post["phase"], "primary");
     assert_eq!(post["round"], 1);
     assert!(!post["cards"].as_array().unwrap().is_empty());
 }
@@ -204,7 +204,7 @@ async fn round_auto_closes_when_timer_expires() {
     let c = reqwest::Client::new();
     // 1-second round timer.
     let mut body = setup_body();
-    body["round_seconds"] = json!(1);
+    body["primary_round_seconds"] = json!(1);
     c.post(format!("{base}/api/setup")).json(&body).send().await.unwrap();
 
     assert_eq!(get_state(&c, &base, None).await["round"], 1);
@@ -241,6 +241,12 @@ async fn ladder_schedule_report_confirm_flow() {
     let base = spawn().await;
     let c = reqwest::Client::new();
     let (alice, bob) = setup_game(&c, &base).await; // Alice is host + player 1
+
+    // Matchmaking only begins after the primary phase. setup_body runs 3 primary
+    // rounds, so close them (as host) to reach the secondary phase.
+    for _ in 0..3 {
+        assert_eq!(c.post(format!("{base}/api/close")).header("x-token", &alice).send().await.unwrap().status(), 200);
+    }
 
     // Both players set availability for the same upcoming slot + a weekly target.
     let now = c.get(format!("{base}/api/ladder")).send().await.unwrap().json::<Value>().await.unwrap()["server_now"].as_u64().unwrap();
@@ -287,6 +293,11 @@ async fn ladder_cancel_costs_elo() {
     let base = spawn().await;
     let c = reqwest::Client::new();
     let (alice, bob) = setup_game(&c, &base).await;
+
+    // Reach the secondary phase (matchmaking is gated until primary is over).
+    for _ in 0..3 {
+        c.post(format!("{base}/api/close")).header("x-token", &alice).send().await.unwrap();
+    }
 
     let now = c.get(format!("{base}/api/ladder")).send().await.unwrap().json::<Value>().await.unwrap()["server_now"].as_u64().unwrap();
     let slot = ((now / 86_400) as i64 + 1) * NB;
@@ -435,7 +446,7 @@ async fn scryfall_source_needs_a_set_code() {
     // A scryfall pool with no set code is rejected before any network fetch.
     let body = json!({
         "player_names": ["A", "B"], "pool_source": "scryfall", "set": "",
-        "starting_money": 10000, "debt_limit": 0, "rounds": 2, "num_packs": 1, "pack_size": 6, "seed": 1
+        "starting_money": 10000, "debt_limit": 0, "primary_rounds": 2, "num_packs": 1, "pack_size": 6, "seed": 1
     });
     let r = c.post(format!("{base}/api/setup")).json(&body).send().await.unwrap();
     assert_eq!(r.status(), 400);

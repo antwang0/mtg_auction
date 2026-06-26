@@ -293,7 +293,7 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
     Json(StateView {
         phase: game.phase,
         round: game.round,
-        total_rounds: game.config.rounds,
+        total_rounds: game.phase_rounds(),
         debt_limit: game.config.debt_limit,
         starting_money: game.config.starting_money,
         set_name: game.set_name.clone(),
@@ -311,7 +311,7 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
         house,
         house_balance: game.house.balance,
         round_deadline: game.round_deadline,
-        round_seconds: game.config.round_seconds,
+        round_seconds: game.round_seconds(),
         server_now: now_epoch(),
     })
 }

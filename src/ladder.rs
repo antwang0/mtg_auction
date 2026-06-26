@@ -85,7 +85,8 @@ impl Game {
     /// availability, results, or the calendar change, so it is safe to call on a
     /// timer.
     pub fn auto_schedule(&mut self, now_epoch: u64) -> usize {
-        if self.phase == Phase::Setup || self.players.len() < 2 {
+        // Matchmaking only begins once the primary (bank-issue) phase is over.
+        if matches!(self.phase, Phase::Setup | Phase::Primary) || self.players.len() < 2 {
             return 0;
         }
         let window = self.config.schedule_window_days.max(1) as i64;

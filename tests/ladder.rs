@@ -2,7 +2,7 @@
 //! rematch avoidance, ELO updates, cancellations, and standings.
 
 use mtg_auction::engine::Game;
-use mtg_auction::model::{CardPool, Config, MatchStatus, DAY_BLOCKS};
+use mtg_auction::model::{CardPool, Config, MatchStatus, Phase, DAY_BLOCKS};
 use std::collections::HashSet;
 
 /// Blocks per day, derived so the tests track [`DAY_BLOCKS`] rather than a literal.
@@ -17,9 +17,15 @@ fn game(players: &[&str]) -> Game {
     let cfg = Config {
         player_names: players.iter().map(|s| s.to_string()).collect(),
         set: "sample".into(),
+        primary_rounds: 1,
         ..Config::default()
     };
-    Game::setup(cfg, CardPool::sample()).unwrap()
+    let mut g = Game::setup(cfg, CardPool::sample()).unwrap();
+    // Matchmaking only runs once the primary phase is over; close the single
+    // primary round to reach the secondary phase.
+    g.close_round().unwrap();
+    assert_eq!(g.phase, Phase::Secondary);
+    g
 }
 
 /// Slot id for a day offset from "today" (NOW) and a block index.

@@ -247,7 +247,7 @@ pub async fn timer_loop(state: AppState) {
         tick += 1;
         let changed = {
             let mut game = state.lock_game();
-            let due = game.phase == Phase::Bidding
+            let due = matches!(game.phase, Phase::Primary | Phase::Secondary)
                 && game.round_deadline.is_some_and(|dl| now_epoch() >= dl);
             if due {
                 let _ = game.close_round();

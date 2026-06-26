@@ -38,12 +38,6 @@
         <label>Debt limit ($)
           <input id="cfg-debt" type="number" step="0.01" min="0" value="0.00" />
         </label>
-        <label>Auction rounds
-          <input id="cfg-rounds" type="number" value="4" min="1" />
-        </label>
-        <label>Round timer (s, 0 = manual)
-          <input id="cfg-timer" type="number" value="0" min="0" />
-        </label>
         <label>Seed <span class="muted">(reproducibility)</span>
           <span class="seed-row">
             <input id="cfg-seed" type="number" value="42" min="0" />
@@ -51,6 +45,35 @@
           </span>
         </label>
       </div>
+
+      <fieldset>
+        <legend>Auction phases <span class="muted">(primary: bank issues its cards · secondary: players trade each other)</span></legend>
+        <div class="grid-form">
+          <label>Primary rounds <input id="cfg-primary-rounds" type="number" value="4" min="1" /></label>
+          <label>Primary round timer
+            <span class="dur-row">
+              <input id="cfg-primary-timer" type="number" value="0" min="0" />
+              <select id="cfg-primary-timer-unit">
+                <option value="60">min</option>
+                <option value="3600">hours</option>
+                <option value="86400">days</option>
+              </select>
+            </span>
+          </label>
+          <label>Secondary rounds <input id="cfg-secondary-rounds" type="number" value="4" min="1" /></label>
+          <label>Secondary round timer
+            <span class="dur-row">
+              <input id="cfg-secondary-timer" type="number" value="0" min="0" />
+              <select id="cfg-secondary-timer-unit">
+                <option value="60">min</option>
+                <option value="3600">hours</option>
+                <option value="86400">days</option>
+              </select>
+            </span>
+          </label>
+        </div>
+        <p class="muted">A round timer of <strong>0</strong> means rounds close only when you click <em>Close</em>. After the primary phase the bank withdraws its remaining cards and players trade only with each other.</p>
+      </fieldset>
 
       <fieldset class="pool-source">
         <legend>Card pool source <span class="muted">(pick one)</span></legend>

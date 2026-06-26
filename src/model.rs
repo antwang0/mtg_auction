@@ -409,9 +409,13 @@ pub struct Standing {
 pub enum Phase {
     /// No game configured yet.
     Setup,
-    /// An auction round is open for orders.
-    Bidding,
-    /// All rounds have closed.
+    /// Primary issue: the bank auctions its leftover (unallocated) cards to
+    /// players. Bids/offers are open and the house participates as a seller.
+    Primary,
+    /// Secondary market: the bank has withdrawn and players trade only with each
+    /// other. Matchmaking on the ladder begins once this phase opens.
+    Secondary,
+    /// All rounds of both phases have closed.
     Finished,
 }
 
@@ -467,15 +471,21 @@ pub struct Config {
     /// How far below zero a balance is allowed to go. Total resting bids may
     /// not commit a player past `balance + debt_limit`.
     pub debt_limit: Cents,
-    pub rounds: u32,
+    /// How many auction rounds the primary phase (bank issuance) runs.
+    pub primary_rounds: u32,
+    /// How many auction rounds the secondary phase (player trading) runs.
+    #[serde(default = "default_secondary_rounds")]
+    pub secondary_rounds: u32,
     pub num_packs: u32,
     pub pack_size: u32,
     /// PRNG seed so a game can be reproduced.
     pub seed: u64,
-    /// Seconds before a round auto-closes. `0` means rounds only close when the
-    /// host closes them manually.
+    /// Seconds before a primary-phase round auto-closes. `0` = manual close only.
     #[serde(default)]
-    pub round_seconds: u32,
+    pub primary_round_seconds: u32,
+    /// Seconds before a secondary-phase round auto-closes. `0` = manual only.
+    #[serde(default)]
+    pub secondary_round_seconds: u32,
 
     // ---- ELO ladder settings ----
     /// ELO every player starts the ladder at.
@@ -502,6 +512,9 @@ pub struct Config {
 
 fn default_block_hours() -> Vec<u32> {
     DAY_BLOCKS.to_vec()
+}
+fn default_secondary_rounds() -> u32 {
+    4
 }
 
 fn default_set() -> String {
@@ -544,11 +557,13 @@ impl Default for Config {
             house_offer_cap_pct: default_house_cap_pct(),
             starting_money: 10_000, // $100.00
             debt_limit: 0,
-            rounds: 4,
+            primary_rounds: 4,
+            secondary_rounds: default_secondary_rounds(),
             num_packs: 4,
             pack_size: 15,
             seed: 42,
-            round_seconds: 0,
+            primary_round_seconds: 0,
+            secondary_round_seconds: 0,
             starting_elo: default_starting_elo(),
             elo_k: default_elo_k(),
             cancel_penalty: default_cancel_penalty(),
