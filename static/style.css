@@ -553,6 +553,29 @@ table.cal .cal-day { white-space: nowrap; color: var(--muted); padding-right: 0.
 .sched-row:last-child { border-bottom: 0; }
 .dstat-received { color: var(--buy); }
 .dstat-reversed { color: var(--sell); }
+
+/* ---- feedback widget (every page) ---- */
+#report-widget { position: fixed; right: 1rem; bottom: 1rem; z-index: 1000; display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; }
+#report-fab { padding: 0.45rem 0.8rem; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); font-size: 0.85rem; cursor: pointer; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4); }
+#report-fab:hover { border-color: var(--accent); }
+#report-pop { width: 18rem; max-width: 80vw; padding: 0.8rem; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); }
+#report-pop.hidden { display: none; }
+.report-head { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 0.5rem; }
+.report-kind { display: flex; gap: 1rem; margin-bottom: 0.5rem; font-size: 0.9rem; }
+.report-kind label { display: inline; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.report-kind input { width: auto; margin-right: 0.3rem; }
+#report-text { resize: vertical; }
+.report-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.report-msg { margin-top: 0.4rem; font-size: 0.82rem; color: var(--muted); min-height: 1em; }
+/* admin feedback list */
+.report-row { padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
+.report-row:last-child { border-bottom: 0; }
+.report-row.resolved { opacity: 0.55; }
+.report-meta { font-size: 0.85rem; margin-bottom: 0.2rem; }
+.report-body { white-space: pre-wrap; font-size: 0.9rem; margin: 0.2rem 0; }
+.report-row-actions { display: flex; gap: 0.5rem; }
+.rep-bug { color: var(--sell); font-weight: 600; }
+.rep-feature { color: var(--accent); font-weight: 600; }
 .gpw-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
 .gpw-row input { width: 4rem; }
 .matchcard { border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.8rem; margin-bottom: 0.6rem; background: var(--panel2); }

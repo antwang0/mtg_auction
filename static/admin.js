@@ -98,6 +98,8 @@ function render() {
   $("trades-card").classList.toggle("hidden", !state.am_admin);
   $("ladder-card").classList.toggle("hidden", !state.am_admin || !inGame);
   $("deliveries-card").classList.toggle("hidden", !state.am_admin || !inGame);
+  $("reports-card").classList.toggle("hidden", !state.am_admin);
+  if (state.am_admin) renderReports();
   if (state.am_admin && inGame) { renderHouse(); renderDeliveries(); }
   if (state.am_admin && inGame) {
     const timer = state.round_seconds ? ` · auto-close timer ${state.round_seconds}s` : "";
@@ -737,6 +739,44 @@ $("deliveries-table").addEventListener("click", async (e) => {
     await api("/api/deliveries/reverse", "POST", { delivery_id: Number(b.dataset.id) });
     await refresh();
   } catch (err) { $("deliveries-error").textContent = err.message; }
+});
+
+function renderReports() {
+  const box = $("reports-list");
+  const reports = (state && state.reports) || [];
+  const open = reports.filter((r) => !r.resolved).length;
+  $("reports-count").textContent = reports.length
+    ? `(${open} open · ${reports.length} total)` : "(none yet)";
+  if (!reports.length) { box.innerHTML = `<p class="muted">No feedback submitted yet.</p>`; return; }
+  // Open first, then newest first within each group.
+  const sorted = [...reports].sort((a, b) => (a.resolved - b.resolved) || (b.created - a.created));
+  box.innerHTML = sorted.map((r) => {
+    const when = new Date(r.created * 1000).toLocaleString();
+    const tag = r.kind === "bug" ? `<span class="rep-bug">🐞 bug</span>` : `<span class="rep-feature">✨ feature</span>`;
+    return `<div class="report-row ${r.resolved ? "resolved" : ""}">
+        <div class="report-meta">${tag} <span class="muted">— ${esc(r.reporter_name)} · ${esc(when)}</span></div>
+        <div class="report-body">${esc(r.text)}</div>
+        <div class="report-row-actions">
+          <button class="ghost rep-toggle" data-id="${r.id}" data-resolved="${r.resolved ? 1 : 0}">${r.resolved ? "Reopen" : "Mark done"}</button>
+          <button class="ghost rep-del" data-id="${r.id}">Delete</button>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+$("reports-list").addEventListener("click", async (e) => {
+  const toggle = e.target.closest(".rep-toggle");
+  const del = e.target.closest(".rep-del");
+  try {
+    if (toggle) {
+      await api("/api/reports/resolve", "POST", { report_id: Number(toggle.dataset.id), resolved: toggle.dataset.resolved !== "1" });
+      await refresh();
+    } else if (del) {
+      if (!confirm("Delete this feedback permanently?")) return;
+      await api("/api/reports/delete", "POST", { report_id: Number(del.dataset.id) });
+      await refresh();
+    }
+  } catch (err) { $("reports-error").textContent = err.message; }
 });
 
 $("btn-tokens-done").onclick = () => $("tokens").classList.add("hidden");

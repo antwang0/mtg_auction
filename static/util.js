@@ -1,8 +1,8 @@
 "use strict";
 
 // Shared helpers loaded (as a classic script) before app.js / admin.js so both
-// pages get the same money formatting, parsing and HTML escaping. Keep this file
-// dependency-free and side-effect-free — it only defines globals.
+// pages get the same money formatting, parsing and HTML escaping. Mostly defines
+// globals; it also mounts the feedback widget (see the bottom of the file).
 
 const TOKEN_KEY = "mtg_auction_token";
 
@@ -67,3 +67,62 @@ function startLiveUpdates({ refresh, setConn }) {
   connect();
   refresh();
 }
+
+// ---- feedback widget ----
+// A small "Feedback" button shown on every page that lets anyone file a bug
+// report or feature request. Self-contained: posts to /api/reports with the
+// stored token (if any), so it doesn't depend on app.js / admin.js.
+async function submitReport(kind, text) {
+  const headers = { "Content-Type": "application/json" };
+  const tok = localStorage.getItem(TOKEN_KEY);
+  if (tok) headers["X-Token"] = tok;
+  const res = await fetch("/api/reports", { method: "POST", headers, body: JSON.stringify({ kind, text }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+}
+
+function mountReportWidget() {
+  if (document.getElementById("report-widget")) return;
+  const wrap = document.createElement("div");
+  wrap.id = "report-widget";
+  wrap.innerHTML =
+    `<div id="report-pop" class="hidden">
+       <div class="report-head">Report a bug / request a feature</div>
+       <div class="report-kind">
+         <label><input type="radio" name="report-kind" value="bug" checked /> 🐞 Bug</label>
+         <label><input type="radio" name="report-kind" value="feature" /> ✨ Feature</label>
+       </div>
+       <textarea id="report-text" rows="4" placeholder="Describe the bug, or the feature you'd like…"></textarea>
+       <div class="report-actions">
+         <button id="report-send" class="primary">Send</button>
+         <button id="report-cancel" class="ghost">Cancel</button>
+       </div>
+       <div id="report-msg" class="report-msg"></div>
+     </div>
+     <button id="report-fab" title="Report a bug or request a feature">💬 Feedback</button>`;
+  document.body.appendChild(wrap);
+
+  const pop = wrap.querySelector("#report-pop");
+  const msg = wrap.querySelector("#report-msg");
+  const text = wrap.querySelector("#report-text");
+  wrap.querySelector("#report-fab").onclick = () => {
+    pop.classList.toggle("hidden");
+    msg.textContent = "";
+    if (!pop.classList.contains("hidden")) text.focus();
+  };
+  wrap.querySelector("#report-cancel").onclick = () => pop.classList.add("hidden");
+  wrap.querySelector("#report-send").onclick = async () => {
+    const t = text.value.trim();
+    if (!t) { msg.textContent = "Please describe it first."; return; }
+    const kind = wrap.querySelector('input[name="report-kind"]:checked').value;
+    try {
+      await submitReport(kind, t);
+      text.value = "";
+      msg.textContent = "Thanks! Sent to the host.";
+      setTimeout(() => pop.classList.add("hidden"), 1200);
+    } catch (e) { msg.textContent = e.message; }
+  };
+}
+
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountReportWidget);
+else mountReportWidget();

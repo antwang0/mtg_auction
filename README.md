@@ -120,9 +120,15 @@ were even when nothing traded.
 - **`/`** — the player view (Inventory + Market tabs, as above).
 - **`/admin`** — host-only controls: start/reset a game, the player token
   hand-out, closing rounds, the full **order ledger** (every bid and offer) and
-  trade history, plus the **ladder** view (run the scheduler on demand, the ELO
-  standings, and a match list with host result overrides). Logging in here needs
+  trade history, the **ladder** view (run the scheduler on demand, the ELO
+  standings, and a match list with host result overrides), and a **Feedback**
+  panel of submitted bug reports / feature requests. Logging in here needs
   the host token (the first player's).
+
+Every page (player and admin) has a **💬 Feedback** button that lets anyone —
+logged in or not — file a **bug report or feature request**; they show up in the
+host's Feedback panel on `/admin` (where they can be marked done or deleted) and
+**survive game resets**.
 
 ## Sets & card data
 
@@ -333,6 +339,9 @@ network, not the open internet.
 | `POST /api/close` | host token | – | Match the current round and advance. |
 | `POST /api/deliveries/receive` | player token | `{delivery_id}` | The buyer marks one of their deliveries received (settling it). |
 | `POST /api/deliveries/reverse` | host token | `{delivery_id}` | Host reverses a delivery to fix an error (no penalty). |
+| `POST /api/reports` | optional `X-Token` | `{kind, text}` | File a bug report (`kind: "bug"`) or feature request (`"feature"`). Anyone may submit; a token attributes it to that player. |
+| `POST /api/reports/resolve` | host token | `{report_id, resolved}` | Mark a report done or reopen it. |
+| `POST /api/reports/delete` | host token | `{report_id}` | Delete a report. |
 | `POST /api/cards/add` | host token | `{card_list}` | Add cards (from a list) to the house inventory mid-game. |
 | `POST /api/players/add` | host token | `{name}` | Add a player mid-game; deals them from the house and returns `{player, name, token}`. |
 | `POST /api/house/offer` | host token | – | List the house's cards into the auction at a noisy reference price; returns `{listed}`. |

@@ -37,6 +37,9 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/close", post(close_round))
         .route("/api/deliveries/receive", post(receive_delivery))
         .route("/api/deliveries/reverse", post(reverse_delivery))
+        .route("/api/reports", post(add_report))
+        .route("/api/reports/resolve", post(resolve_report))
+        .route("/api/reports/delete", post(delete_report))
         .route("/api/cards/add", post(add_cards))
         .route("/api/players/add", post(add_player))
         .route("/api/house/offer", post(offer_house))
@@ -197,6 +200,8 @@ pub struct StateView {
     my_deliveries: Vec<Delivery>,
     /// Every delivery in the game — populated only for the host (else empty).
     all_deliveries: Vec<Delivery>,
+    /// Bug reports / feature requests — populated only for the host (else empty).
+    reports: Vec<Report>,
 }
 
 fn holdings_of(game: &Game, p: &Player) -> Vec<HoldingView> {
@@ -282,6 +287,7 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
     };
     let all_deliveries: Vec<Delivery> =
         if game.is_admin(&token) { game.deliveries.clone() } else { Vec::new() };
+    let reports: Vec<Report> = if game.is_admin(&token) { game.reports.clone() } else { Vec::new() };
     let (my_committed, my_available) = match me {
         Some(id) => {
             let committed = game.committed(id);
@@ -328,6 +334,7 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
         server_now: now_epoch(),
         my_deliveries,
         all_deliveries,
+        reports,
     })
 }
 
@@ -470,6 +477,10 @@ pub async fn setup(State(state): State<AppState>, headers: HeaderMap, Json(confi
         if guard.phase != Phase::Setup && !guard.is_admin(&token_of(&headers)) {
             return Err(ApiError::unauthorized("only the host can start a new game"));
         }
+        // Bug reports / feature requests are about the app, not the game, so they
+        // survive a reset.
+        let (reports, seq) = guard.take_reports();
+        game.restore_reports(reports, seq);
         *guard = game;
     }
     state.save_and_notify().await;
@@ -597,6 +608,60 @@ pub async fn reverse_delivery(State(state): State<AppState>, headers: HeaderMap,
             return Err(ApiError::unauthorized("only the host can reverse a delivery"));
         }
         game.reverse_delivery(req.delivery_id)?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct FeedbackRequest {
+    kind: ReportKind,
+    text: String,
+}
+
+/// Anyone (logged in or not) can file a bug report or feature request.
+pub async fn add_report(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<FeedbackRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        let reporter = game.player_for_token(&token_of(&headers));
+        game.add_report(req.kind, &req.text, reporter, now_epoch())?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct ResolveReportRequest {
+    report_id: u64,
+    resolved: bool,
+}
+
+/// Host: mark a report resolved or reopen it.
+pub async fn resolve_report(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<ResolveReportRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can update reports"));
+        }
+        game.set_report_resolved(req.report_id, req.resolved)?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct DeleteReportRequest {
+    report_id: u64,
+}
+
+/// Host: delete a report.
+pub async fn delete_report(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<DeleteReportRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can delete reports"));
+        }
+        game.delete_report(req.report_id)?;
     }
     state.save_and_notify().await;
     Ok(Json(serde_json::json!({ "ok": true })))

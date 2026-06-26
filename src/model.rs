@@ -253,6 +253,28 @@ pub struct Trade {
     pub offer: Cents,
 }
 
+/// A user-submitted bug report or feature request, shown to the host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReportKind {
+    Bug,
+    Feature,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Report {
+    pub id: u64,
+    pub kind: ReportKind,
+    pub text: String,
+    /// The submitter, if they were logged in (else `None` / "anonymous").
+    pub reporter: Option<PlayerId>,
+    pub reporter_name: String,
+    pub created: u64,
+    /// The host can tick a report off once handled.
+    #[serde(default)]
+    pub resolved: bool,
+}
+
 /// Lifecycle of a physical card delivery created by a trade.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
