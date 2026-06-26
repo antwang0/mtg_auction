@@ -30,6 +30,13 @@ function escapeHtml(s) {
 }
 const esc = escapeHtml;
 
+// Auction phase helpers (shared by both pages). The two trading phases have
+// orders open; phaseLabel gives a human label.
+function isTrading(s) { return !!s && (s.phase === "primary" || s.phase === "secondary"); }
+function phaseLabel(p) {
+  return p === "primary" ? "Primary (bank issue)" : p === "secondary" ? "Secondary (trading)" : p;
+}
+
 // Live updates: a Server-Sent Events stream with an adaptive polling fallback.
 // While the stream is healthy we poll slowly (just a safety net); when it drops
 // we poll quickly so the UI stays fresh, and rebuild the stream if the browser
@@ -105,23 +112,29 @@ function mountReportWidget() {
   const pop = wrap.querySelector("#report-pop");
   const msg = wrap.querySelector("#report-msg");
   const text = wrap.querySelector("#report-text");
+  const send = wrap.querySelector("#report-send");
+  const close = () => pop.classList.add("hidden");
   wrap.querySelector("#report-fab").onclick = () => {
     pop.classList.toggle("hidden");
     msg.textContent = "";
     if (!pop.classList.contains("hidden")) text.focus();
   };
-  wrap.querySelector("#report-cancel").onclick = () => pop.classList.add("hidden");
-  wrap.querySelector("#report-send").onclick = async () => {
+  wrap.querySelector("#report-cancel").onclick = close;
+  send.onclick = async () => {
     const t = text.value.trim();
     if (!t) { msg.textContent = "Please describe it first."; return; }
     const kind = wrap.querySelector('input[name="report-kind"]:checked').value;
+    send.disabled = true; // guard against a double-submit
     try {
       await submitReport(kind, t);
       text.value = "";
       msg.textContent = "Thanks! Sent to the host.";
-      setTimeout(() => pop.classList.add("hidden"), 1200);
-    } catch (e) { msg.textContent = e.message; }
+      setTimeout(close, 1200);
+    } catch (e) { msg.textContent = e.message; } finally { send.disabled = false; }
   };
+  // Dismiss the popover on Escape or a click outside it.
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !pop.classList.contains("hidden")) close(); });
+  document.addEventListener("click", (e) => { if (!pop.classList.contains("hidden") && !wrap.contains(e.target)) close(); });
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountReportWidget);

@@ -6,11 +6,7 @@ let state = null;
 let timerDeadline = null;
 let clockSkew = 0;
 
-// Trading phases (orders open) vs. setup/finished; and a display label.
-function isTrading(s) { return !!s && (s.phase === "primary" || s.phase === "secondary"); }
-function phaseLabel(p) {
-  return p === "primary" ? "Primary (bank issue)" : p === "secondary" ? "Secondary (trading)" : p;
-}
+// isTrading / phaseLabel live in util.js (shared with app.js).
 
 function toast(html, kind) {
   const t = document.createElement("div");

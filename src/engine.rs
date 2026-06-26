@@ -962,7 +962,7 @@ impl Game {
             return Err("only the buyer can mark a delivery received".into());
         }
         if d.status != DeliveryStatus::Pending {
-            return Err("this delivery is already settled".into());
+            return Err("this delivery is no longer pending".into());
         }
         d.status = DeliveryStatus::Received;
         Ok(())

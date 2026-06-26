@@ -31,11 +31,7 @@ const KNOWN_TYPES = ["Creature", "Planeswalker", "Instant", "Sorcery", "Artifact
 function fmtMV(cmc) { return cmc === null || cmc === undefined ? "—" : String(cmc); }
 function shortType(tl) { if (!tl) return "—"; const i = tl.indexOf("—"); return (i >= 0 ? tl.slice(0, i) : tl).trim(); }
 function mineOf(c) { return myQty[c.id] || 0; }
-// The two trading phases (orders are open); see also phaseLabel.
-function isTrading(s) { return !!s && (s.phase === "primary" || s.phase === "secondary"); }
-function phaseLabel(p) {
-  return p === "primary" ? "Primary (bank issue)" : p === "secondary" ? "Secondary (trading)" : p;
-}
+// isTrading / phaseLabel live in util.js (shared with admin.js).
 function loadWants() { try { return new Set(JSON.parse(localStorage.getItem(WANTS_KEY) || "[]")); } catch { return new Set(); } }
 function saveWants() { localStorage.setItem(WANTS_KEY, JSON.stringify([...wants])); }
 function star(name) { return wants.has(name) ? "★" : "☆"; }

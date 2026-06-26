@@ -572,7 +572,7 @@ table.cal .cal-day { white-space: nowrap; color: var(--muted); padding-right: 0.
 .report-row:last-child { border-bottom: 0; }
 .report-row.resolved { opacity: 0.55; }
 .report-meta { font-size: 0.85rem; margin-bottom: 0.2rem; }
-.report-body { white-space: pre-wrap; font-size: 0.9rem; margin: 0.2rem 0; }
+.report-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9rem; margin: 0.2rem 0; }
 .report-row-actions { display: flex; gap: 0.5rem; }
 .rep-bug { color: var(--sell); font-weight: 600; }
 .rep-feature { color: var(--accent); font-weight: 600; }
