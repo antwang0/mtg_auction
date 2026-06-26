@@ -216,9 +216,11 @@ self-scheduling **ELO ladder** (the **Ladder** tab). Every player starts at
 
 - **Availability & target.** Each player marks the time blocks they're free on a
   calendar and sets how many games they want per week (capped at
-  `max_games_per_week`; weeks run **Monday→Sunday**, UTC). Time blocks are fixed
-  UTC hours under the hood, rendered in each viewer's **local timezone**;
-  availability is bounded to a sane number of slots per player.
+  `max_games_per_week`; weeks run **Monday→Sunday**, UTC). There are two blocks a
+  day — a **morning and an evening** slot. The host sets their start times on the
+  New Game form (entered in the host's local time, stored as fixed UTC hours and
+  rendered in each viewer's **local timezone**); availability is bounded to a sane
+  number of slots per player.
 - **Automatic matchmaking.** Scheduling is **event-driven** — it runs the moment
   someone changes their availability or weekly target, or frees a slot by
   cancelling — plus a periodic pass for the passage of time (new days/weeks).
@@ -238,10 +240,11 @@ self-scheduling **ELO ladder** (the **Ladder** tab). Every player starts at
   actually played.
 
 The ladder's ELO/scheduling settings (`starting_elo`, `elo_k`, `cancel_penalty`,
-`max_games_per_week`, `schedule_window_days`) are part of `Config`, have
-sensible defaults, and are bounded at setup (e.g. `schedule_window_days ≤ 60`,
-`max_games_per_week ≤ 50`) so the auto-scheduler can't be driven into runaway
-work.
+`max_games_per_week`, `schedule_window_days`, and `ladder_block_hours` — the two
+UTC block start hours) are part of `Config`, have sensible defaults, and are
+bounded at setup (e.g. `schedule_window_days ≤ 60`, `max_games_per_week ≤ 50`,
+exactly two block hours each `0..=23`) so the auto-scheduler can't be driven into
+runaway work.
 
 ## Auth
 

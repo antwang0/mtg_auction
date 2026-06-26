@@ -370,6 +370,28 @@ function addPlayerRow(name = "", focus = false) {
 $("btn-add-player-row").onclick = () => addPlayerRow("", true);
 ["Alice", "Bob", "Carol", "Dave"].forEach((n) => addPlayerRow(n));
 
+// The ladder block hours are entered in the host's local time but stored as
+// fixed UTC hours (so every viewer can render them in their own timezone).
+// Convert a "HH:MM" local value to the equivalent whole UTC hour.
+function blockHourToUtc(timeStr) {
+  const h = Number((timeStr || "0:0").split(":")[0]) || 0;
+  const d = new Date();
+  d.setHours(h, 0, 0, 0);
+  return d.getUTCHours();
+}
+// Echo what the two slots become in UTC so the host can see the conversion.
+function updateBlockHint() {
+  const m = blockHourToUtc($("cfg-block-morning").value);
+  const e = blockHourToUtc($("cfg-block-evening").value);
+  const fmt = (h) => String(h).padStart(2, "0") + ":00";
+  $("cfg-block-hint").innerHTML =
+    `The two daily availability slots, in <strong>your</strong> local time ` +
+    `(stored as ${fmt(m)} / ${fmt(e)} UTC). Players see them in their own timezone.`;
+}
+$("cfg-block-morning").addEventListener("input", updateBlockHint);
+$("cfg-block-evening").addEventListener("input", updateBlockHint);
+updateBlockHint();
+
 // Live setup preview + inline validation. Recomputes a one-line summary of what
 // "Open packs & deal" will do, and blocks submit (with the reason) while the
 // form has a problem the server would reject anyway.
@@ -588,6 +610,7 @@ $("btn-setup").onclick = async () => {
     cancel_penalty: Number($("cfg-elo-cancel").value),
     max_games_per_week: Number($("cfg-elo-maxgames").value),
     schedule_window_days: Number($("cfg-elo-window").value),
+    ladder_block_hours: [blockHourToUtc($("cfg-block-morning").value), blockHourToUtc($("cfg-block-evening").value)],
   };
   const btn = $("btn-setup");
   btn.disabled = true;

@@ -18,11 +18,14 @@ const MAX_AVAIL_SLOTS: usize = 2000;
 /// no-show and expired (so players have time to report late).
 const NO_SHOW_GRACE_SECS: u64 = 24 * 3600;
 
-/// The Unix epoch second a slot begins (see [`DAY_BLOCKS`]).
-pub fn slot_start_epoch(slot: i64) -> u64 {
+/// The Unix epoch second a slot begins, given the game's configured block start
+/// hours (see [`Config::ladder_block_hours`]). Falls back to [`DAY_BLOCKS`] for
+/// any block index the hours slice doesn't cover.
+pub fn slot_start_epoch(slot: i64, hours: &[u32]) -> u64 {
     let day = slot.div_euclid(N_BLOCKS).max(0);
     let block = slot.rem_euclid(N_BLOCKS) as usize;
-    day as u64 * 86_400 + DAY_BLOCKS[block] as u64 * 3_600
+    let hour = hours.get(block).copied().unwrap_or(DAY_BLOCKS[block]);
+    day as u64 * 86_400 + hour as u64 * 3_600
 }
 
 /// The calendar week a slot falls in, with weeks running Monday→Sunday (UTC).
@@ -116,9 +119,10 @@ impl Game {
             }
         }
 
+        let block_hours = self.config.ladder_block_hours.clone();
         let mut created = 0usize;
         for slot in first_slot..last_slot {
-            if slot_start_epoch(slot) <= now_epoch {
+            if slot_start_epoch(slot, &block_hours) <= now_epoch {
                 continue; // only schedule strictly-future slots
             }
             let w = week_of(slot);
@@ -169,7 +173,7 @@ impl Game {
                     b,
                     b_name: self.players[&b].name.clone(),
                     slot,
-                    slot_start: slot_start_epoch(slot),
+                    slot_start: slot_start_epoch(slot, &block_hours),
                     status: MatchStatus::Scheduled,
                     a_wins: 0,
                     b_wins: 0,

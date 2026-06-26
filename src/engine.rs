@@ -214,6 +214,13 @@ impl Game {
         if !(0..=100_000).contains(&config.starting_elo) {
             return Err("starting ELO must be between 0 and 100000".into());
         }
+        // Exactly two daily blocks (morning + evening), each a valid UTC hour.
+        if config.ladder_block_hours.len() != DAY_BLOCKS.len() {
+            return Err("need exactly two ladder block hours (morning and evening)".into());
+        }
+        if config.ladder_block_hours.iter().any(|&h| h > 23) {
+            return Err("ladder block hours must be between 0 and 23 (UTC)".into());
+        }
         if pool.is_empty() {
             return Err("the chosen set has no cards".into());
         }

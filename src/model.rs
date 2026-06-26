@@ -306,15 +306,14 @@ pub struct OrderEvent {
 
 // ---- ELO ladder -----------------------------------------------------------
 
-/// Availability is expressed in discrete time blocks. Each day is split into
-/// these block start hours (UTC); a slot id packs the day (days since the Unix
-/// epoch) and the block index together as `slot = day * DAY_BLOCKS.len() + block`.
+/// Availability is split into a morning and an evening time block per day; a
+/// slot id packs the day (days since the Unix epoch) and the block index (0 =
+/// morning, 1 = evening) as `slot = day * DAY_BLOCKS.len() + block`.
 ///
-/// Two blocks per day — a morning and an evening slot. The hours are fixed UTC
-/// instants rendered in each viewer's local timezone, and the UI labels block 0
-/// "Morning" and block 1 "Evening". Adjust these hours to suit the group's
-/// timezones; changing the *count* also reshapes slot ids, so prefer doing it
-/// before a ladder has availability/matches saved.
+/// The two block *start hours* are configurable per game ([`Config::ladder_block_hours`]);
+/// `DAY_BLOCKS` is just the default (09:00 / 21:00 UTC). They are fixed UTC
+/// instants rendered in each viewer's local timezone. The block *count* is fixed
+/// at two, so `DAY_BLOCKS.len()` remains the slot-packing base.
 pub const DAY_BLOCKS: [u32; 2] = [9, 21];
 
 /// A self-scheduling ELO ladder layered on a game: every match (upcoming,
@@ -494,6 +493,15 @@ pub struct Config {
     /// How many days ahead the auto-scheduler looks for slots.
     #[serde(default = "default_window_days")]
     pub schedule_window_days: u32,
+    /// The UTC start hours of the daily morning and evening availability blocks
+    /// (e.g. `[12, 22]`). Exactly two entries, each `0..=23`. Fixed UTC instants,
+    /// shown in each viewer's local time. Defaults to [`DAY_BLOCKS`].
+    #[serde(default = "default_block_hours")]
+    pub ladder_block_hours: Vec<u32>,
+}
+
+fn default_block_hours() -> Vec<u32> {
+    DAY_BLOCKS.to_vec()
 }
 
 fn default_set() -> String {
@@ -546,6 +554,7 @@ impl Default for Config {
             cancel_penalty: default_cancel_penalty(),
             max_games_per_week: default_max_games(),
             schedule_window_days: default_window_days(),
+            ladder_block_hours: default_block_hours(),
         }
     }
 }

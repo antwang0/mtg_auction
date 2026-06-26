@@ -131,7 +131,10 @@
             <label>Cancel penalty <input id="cfg-elo-cancel" type="number" value="16" min="0" max="1000" /></label>
             <label>Max games / week <input id="cfg-elo-maxgames" type="number" value="5" min="1" max="50" /></label>
             <label>Schedule window (days) <input id="cfg-elo-window" type="number" value="14" min="1" max="60" /></label>
+            <label>Morning slot <input id="cfg-block-morning" type="time" step="3600" value="08:00" /></label>
+            <label>Evening slot <input id="cfg-block-evening" type="time" step="3600" value="18:00" /></label>
           </div>
+          <p id="cfg-block-hint" class="muted">The two daily availability slots, in <strong>your</strong> local time. Players see them converted to their own timezone.</p>
         </fieldset>
       </details>
 

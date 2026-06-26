@@ -678,7 +678,7 @@ pub async fn get_ladder(State(state): State<AppState>, headers: HeaderMap) -> Js
     Json(LadderView {
         standings: game.standings(),
         matches: game.ladder.matches.clone(),
-        blocks: DAY_BLOCKS.to_vec(),
+        blocks: game.config.ladder_block_hours.clone(),
         window_days: game.config.schedule_window_days,
         max_games_per_week: game.config.max_games_per_week,
         server_now: now_epoch(),
