@@ -96,7 +96,13 @@ function render() {
   $("deliveries-card").classList.toggle("hidden", !state.am_admin || !inGame);
   $("reports-card").classList.toggle("hidden", !state.am_admin);
   if (state.am_admin) renderReports();
-  if (state.am_admin && inGame) { renderHouse(); renderDeliveries(); }
+  if (state.am_admin && inGame) {
+    renderHouse();
+    renderDeliveries();
+    const cards = state.cards || [];
+    const total = cards.reduce((s, c) => s + (c.supply || 0), 0);
+    $("export-info").textContent = `${cards.length} distinct · ${total} copies`;
+  }
   if (state.am_admin && inGame) {
     const timer = state.round_seconds ? ` · auto-close timer ${state.round_seconds}s` : "";
     $("round-info").textContent =
@@ -695,6 +701,45 @@ function renderHouse() {
     tb.appendChild(tr);
   });
 }
+
+// ---- card export ----
+function downloadFile(filename, text, mime) {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function exportSlug() {
+  return (state && state.set_name || "cards").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "cards";
+}
+function sortedCards() {
+  return [...((state && state.cards) || [])].sort((a, b) => a.name.localeCompare(b.name));
+}
+// A `quantity name` decklist of the whole pool — pastes back into a new game.
+function exportDecklist() {
+  const lines = sortedCards().filter((c) => c.supply > 0).map((c) => `${c.supply} ${c.name}`);
+  if (!lines.length) return;
+  downloadFile(`${exportSlug()}-decklist.txt`, lines.join("\n") + "\n", "text/plain");
+}
+// A richer CSV of the card catalog.
+function exportCsv() {
+  const cards = sortedCards();
+  if (!cards.length) return;
+  const cell = (v) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const rows = [["name", "rarity", "supply", "mana_value", "type", "ref_price_usd"]];
+  cards.forEach((c) => rows.push([
+    c.name, c.rarity, c.supply, c.cmc ?? "", c.type_line ?? "",
+    c.ref_price != null ? (c.ref_price / 100).toFixed(2) : "",
+  ]));
+  downloadFile(`${exportSlug()}-cards.csv`, rows.map((r) => r.map(cell).join(",")).join("\n") + "\n", "text/csv");
+}
+$("btn-export-decklist").onclick = exportDecklist;
+$("btn-export-csv").onclick = exportCsv;
 
 function deliveryDeadline(d) {
   if (d.status !== "pending") return "—";

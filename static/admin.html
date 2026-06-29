@@ -186,6 +186,14 @@
     <section id="manage" class="card hidden">
       <h2>Manage <span class="muted">(mid-game)</span></h2>
 
+      <h3>Export cards <span class="muted">(the full pool, including the house)</span></h3>
+      <div class="admin export-row">
+        <button id="btn-export-decklist" class="ghost">Export decklist (.txt)</button>
+        <button id="btn-export-csv" class="ghost">Export CSV</button>
+        <span id="export-info" class="muted"></span>
+      </div>
+      <p class="muted">The decklist (<code>quantity name</code> per line) can be pasted straight back into the card-list field of a new game.</p>
+
       <h3>House inventory <span class="muted">(unallocated cards)</span></h3>
       <div id="house-info" class="muted"></div>
       <div class="admin">

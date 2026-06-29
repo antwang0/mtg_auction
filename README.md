@@ -120,7 +120,8 @@ were even when nothing traded.
 - **`/`** — the player view (Inventory + Market tabs, as above).
 - **`/admin`** — host-only controls: start/reset a game, the player token
   hand-out, closing rounds, the full **order ledger** (every bid and offer) and
-  trade history, the **ladder** view (run the scheduler on demand, the ELO
+  trade history, **exporting the card pool** (a re-importable `quantity name`
+  decklist or a CSV), the **ladder** view (run the scheduler on demand, the ELO
   standings, and a match list with host result overrides), and a **Feedback**
   panel of submitted bug reports / feature requests. Logging in here needs
   the host token (the first player's).
