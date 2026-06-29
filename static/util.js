@@ -37,6 +37,69 @@ function phaseLabel(p) {
   return p === "primary" ? "Primary (bank issue)" : p === "secondary" ? "Secondary (trading)" : p;
 }
 
+// ---- colour-identity filter (shared by the player pages and the admin picker) ----
+// A card's `color_identity` is a canonical WUBRG string ("" = colorless). A
+// colour control selects a set of WUBRG letters plus a match mode:
+//   atmost  — identity ⊆ selected  (the card fits in a deck of these colours)
+//   atleast — identity ⊇ selected  (contains every selected colour, maybe more)
+//   exactly — identity is precisely the selected set
+// The "C" toggle also lets colorless cards through; with nothing selected and C
+// off there is no colour filter at all.
+
+// Coloured pips for a colour string ("" = a single colorless pip).
+function colorPips(colors) {
+  if (!colors) return `<span class="pip pip-C" title="Colorless">C</span>`;
+  return colors.split("").map((c) => `<span class="pip pip-${c}" title="${c}">${c}</span>`).join("");
+}
+
+// Read a colour control's state from its container element (the one holding the
+// .cbtn buttons and the .f-cmode mode select).
+function readColorFilter(box) {
+  const on = box ? Array.from(box.querySelectorAll(".cbtn.active")) : [];
+  return {
+    colors: on.filter((b) => b.dataset.color).map((b) => b.dataset.color),
+    colorless: on.some((b) => b.dataset.facet === "colorless"),
+    mode: box?.querySelector(".f-cmode")?.value || "atmost",
+  };
+}
+
+// Reflect a saved colour-filter state back onto its control (for UI restore).
+function applyColorFilter(box, f) {
+  if (!box || !f) return;
+  box.querySelectorAll(".cbtn").forEach((btn) => {
+    const on = (btn.dataset.color && (f.colors || []).includes(btn.dataset.color)) ||
+      (btn.dataset.facet === "colorless" && f.colorless);
+    btn.classList.toggle("active", !!on);
+  });
+  const m = box.querySelector(".f-cmode");
+  if (m && f.mode) m.value = f.mode;
+}
+
+// Does a card's colour identity satisfy a colour-filter state (from readColorFilter)?
+function matchesColorIdentity(card, f) {
+  if (!f.colors.length && !f.colorless) return true; // no colour filter
+  const id = card.color_identity || "";
+  if (f.colorless && id === "") return true;
+  if (!f.colors.length) return false; // only colorless was requested
+  const ids = new Set(id.split(""));
+  switch (f.mode) {
+    case "atleast": return f.colors.every((c) => ids.has(c));               // identity ⊇ selected
+    case "exactly": return ids.size === f.colors.length && f.colors.every((c) => ids.has(c));
+    default:        return [...ids].every((c) => f.colors.includes(c));      // atmost: identity ⊆ selected
+  }
+}
+
+// Click handler for a colour control: toggle a button (or clear all) then run
+// `onChange`. Returns true if the click hit a colour button.
+function handleColorClick(box, e, onChange) {
+  const b = e.target.closest(".cbtn");
+  if (!b || !box.contains(b)) return false;
+  if (b.dataset.facet === "clear") box.querySelectorAll(".cbtn.active").forEach((x) => x.classList.remove("active"));
+  else b.classList.toggle("active");
+  onChange();
+  return true;
+}
+
 // Live updates: a Server-Sent Events stream with an adaptive polling fallback.
 // While the stream is healthy we poll slowly (just a safety net); when it drops
 // we poll quickly so the UI stays fresh, and rebuild the stream if the browser

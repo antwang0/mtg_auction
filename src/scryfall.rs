@@ -62,6 +62,7 @@ pub async fn fetch_decklist_pool(text: &str) -> Result<CardPool, String> {
                 cmc: None,
                 mana_cost: None,
                 colors: String::new(),
+                color_identity: String::new(),
             });
             (card, qty)
         })
@@ -191,6 +192,11 @@ struct ScryCard {
     /// which case we fall back to scanning the mana cost.
     #[serde(default)]
     colors: Option<Vec<String>>,
+    /// Scryfall's colour *identity*, e.g. `["W","R"]` — every colour in the
+    /// card's costs and rules text. A single value for the whole card (not
+    /// per-face) and always present on real cards; `[]` means colorless.
+    #[serde(default)]
+    color_identity: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -267,7 +273,7 @@ fn build_client() -> Result<reqwest::Client, String> {
 /// Convert a raw Scryfall card into a [`PoolCard`], picking the best image
 /// (front face for double-faced cards) and parsing its USD price into cents.
 fn pool_card_from(card: ScryCard) -> PoolCard {
-    let ScryCard { name, rarity, image_uris, card_faces, prices, type_line, cmc, mana_cost, colors, .. } = card;
+    let ScryCard { name, rarity, image_uris, card_faces, prices, type_line, cmc, mana_cost, colors, color_identity, .. } = card;
     let image = image_uris.and_then(ImageUris::best).or_else(|| {
         card_faces
             .and_then(|faces| faces.into_iter().next())
@@ -277,7 +283,8 @@ fn pool_card_from(card: ScryCard) -> PoolCard {
     let ref_price = prices.and_then(|p| p.usd).as_deref().and_then(parse_price_cents);
     let mana_cost = mana_cost.filter(|s| !s.is_empty());
     let colors = canonical_colors(colors, mana_cost.as_deref());
-    PoolCard { name, rarity: rarity_from(&rarity), image, ref_price, type_line, cmc, mana_cost, colors }
+    let color_identity = canonical_color_identity(color_identity);
+    PoolCard { name, rarity: rarity_from(&rarity), image, ref_price, type_line, cmc, mana_cost, colors, color_identity }
 }
 
 /// Normalise a card's colours to a canonical `WUBRG`-ordered string (empty =
@@ -287,13 +294,7 @@ fn pool_card_from(card: ScryCard) -> PoolCard {
 fn canonical_colors(colors: Option<Vec<String>>, mana_cost: Option<&str>) -> String {
     let mut set: HashSet<char> = HashSet::new();
     match colors {
-        Some(cs) => {
-            for c in cs {
-                if let Some(ch) = c.chars().next() {
-                    set.insert(ch.to_ascii_uppercase());
-                }
-            }
-        }
+        Some(cs) => insert_colors(&mut set, cs),
         None => {
             if let Some(mc) = mana_cost {
                 for ch in ['W', 'U', 'B', 'R', 'G'] {
@@ -304,6 +305,29 @@ fn canonical_colors(colors: Option<Vec<String>>, mana_cost: Option<&str>) -> Str
             }
         }
     }
+    canonical_order(&set)
+}
+
+/// Normalise a card's colour *identity* (Scryfall's `color_identity`) to a
+/// canonical `WUBRG`-ordered string (empty = colorless). Unlike colours there
+/// is no mana-cost fallback — Scryfall's value is authoritative and whole-card.
+fn canonical_color_identity(identity: Option<Vec<String>>) -> String {
+    let mut set: HashSet<char> = HashSet::new();
+    if let Some(cs) = identity {
+        insert_colors(&mut set, cs);
+    }
+    canonical_order(&set)
+}
+
+fn insert_colors(set: &mut HashSet<char>, colors: Vec<String>) {
+    for c in colors {
+        if let Some(ch) = c.chars().next() {
+            set.insert(ch.to_ascii_uppercase());
+        }
+    }
+}
+
+fn canonical_order(set: &HashSet<char>) -> String {
     "WUBRG".chars().filter(|c| set.contains(c)).collect()
 }
 
@@ -370,7 +394,7 @@ async fn fetch_scryfall(code: &str) -> Result<CardPool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_colors, parse_decklist, parse_price_cents};
+    use super::{canonical_color_identity, canonical_colors, parse_decklist, parse_price_cents};
 
     fn cv(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
@@ -395,6 +419,14 @@ mod tests {
         assert_eq!(canonical_colors(None, Some("{1}{W}{U}")), "WU");
         assert_eq!(canonical_colors(None, Some("{3}")), ""); // colorless cost
         assert_eq!(canonical_colors(None, None), "");
+    }
+
+    #[test]
+    fn color_identity_canonicalises_with_no_mana_fallback() {
+        // Canonical WUBRG order, lowercase tolerated; `[]`/absent are colorless.
+        assert_eq!(canonical_color_identity(Some(cv(&["r", "w"]))), "WR");
+        assert_eq!(canonical_color_identity(Some(vec![])), "");
+        assert_eq!(canonical_color_identity(None), "");
     }
 
     #[test]

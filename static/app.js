@@ -617,7 +617,7 @@ $("l-mymatches").addEventListener("click", async (e) => {
 function getFilters(prefix) {
   const box = document.querySelector(`.filters[data-prefix="${prefix}"]`);
   const v = (cls) => box.querySelector(cls)?.value ?? "";
-  return { q: v(".f-q").trim().toLowerCase(), rarity: v(".f-rarity"), type: v(".f-type"), mvmin: v(".f-mvmin"), mvmax: v(".f-mvmax"), show: v(".f-show") };
+  return { q: v(".f-q").trim().toLowerCase(), rarity: v(".f-rarity"), type: v(".f-type"), mvmin: v(".f-mvmin"), mvmax: v(".f-mvmax"), show: v(".f-show"), color: readColorFilter(box.querySelector(".colorsel")) };
 }
 function cardMatches(c, f) {
   if (f.q && !c.name.toLowerCase().includes(f.q)) return false;
@@ -625,6 +625,7 @@ function cardMatches(c, f) {
   if (f.type && !(c.type_line || "").includes(f.type)) return false;
   if (f.mvmin !== "" && (c.cmc == null || c.cmc < Number(f.mvmin))) return false;
   if (f.mvmax !== "" && (c.cmc == null || c.cmc > Number(f.mvmax))) return false;
+  if (f.color && !matchesColorIdentity(c, f.color)) return false;
   if (f.show === "owned" && mineOf(c) <= 0) return false;
   if (f.show === "wanted" && !wants.has(c.name)) return false;
   return true;
@@ -679,7 +680,7 @@ function renderPlan() {
     if (unaffordable(c)) tr.classList.add("unafford");
     tr.innerHTML =
       `<td class="want-cell"><button class="want-star ${wants.has(c.name) ? "on" : ""}" data-name="${esc(c.name)}">${star(c.name)}</button></td>` +
-      `<td>${thumb(c.id)}${esc(c.name)}${orderBadges(c.id)}</td>` +
+      `<td>${thumb(c.id)}${esc(c.name)} <span class="pips">${colorPips(c.colors)}</span>${orderBadges(c.id)}</td>` +
       `<td>${esc(shortType(c.type_line))}</td>` +
       `<td class="num">${fmtMV(c.cmc)}</td>` +
       `<td class="${rarityClass(c.rarity)}">${c.rarity}</td>` +
@@ -718,7 +719,7 @@ function renderGallery() {
       `<button class="want-star ${wants.has(c.name) ? "on" : ""}" data-name="${esc(c.name)}">${star(c.name)}</button>` +
       art +
       `<div class="tile-name">${esc(c.name)}</div>` +
-      `<div class="tile-sub muted">${esc(shortType(c.type_line))} · MV ${fmtMV(c.cmc)}</div>` +
+      `<div class="tile-sub muted">${esc(shortType(c.type_line))} · MV ${fmtMV(c.cmc)} <span class="pips">${colorPips(c.colors)}</span></div>` +
       `<div class="tile-foot"><span class="${rarityClass(c.rarity)}">${c.rarity}</span><span class="num">ref ${fmtUSD(c.ref_price)}</span></div>` +
       `<div class="tile-foot muted"><span>last ${fmtUSD(lastClearByCard[c.id] ?? null)}</span><span>sup ${c.supply}${mine ? ` · you ${mine}` : ""}</span></div>` +
       (orderBadges(c.id) ? `<div class="tile-orders">${orderBadges(c.id)}</div>` : "");
@@ -868,7 +869,7 @@ function saveUi() {
   const read = (prefix) => {
     const b = document.querySelector(`.filters[data-prefix="${prefix}"]`);
     const v = (cls) => b.querySelector(cls)?.value ?? "";
-    return { q: v(".f-q"), rarity: v(".f-rarity"), mvmin: v(".f-mvmin"), mvmax: v(".f-mvmax"), show: v(".f-show") };
+    return { q: v(".f-q"), rarity: v(".f-rarity"), mvmin: v(".f-mvmin"), mvmax: v(".f-mvmax"), show: v(".f-show"), color: readColorFilter(b.querySelector(".colorsel")) };
   };
   const mktBox = document.querySelector('.filters[data-prefix="mkt"]');
   const ui = {
@@ -885,6 +886,7 @@ function restoreUi() {
     const b = document.querySelector(`.filters[data-prefix="${prefix}"]`);
     const set = (cls, val) => { const el = b.querySelector(cls); if (el != null && val != null) el.value = val; };
     set(".f-q", vals.q); set(".f-rarity", vals.rarity); set(".f-mvmin", vals.mvmin); set(".f-mvmax", vals.mvmax); set(".f-show", vals.show);
+    applyColorFilter(b.querySelector(".colorsel"), vals.color);
   };
   if (ui.inv) apply("inv", ui.inv);
   if (ui.mkt) {
@@ -995,6 +997,9 @@ $$(".filters").forEach((box) => {
   const rerender = () => { (prefix === "inv" ? renderPlan() : renderGallery()); saveUi(); };
   box.addEventListener("input", rerender);
   box.addEventListener("change", rerender);
+  // Colour buttons are <button> toggles, so they don't fire input/change.
+  const colorsel = box.querySelector(".colorsel");
+  if (colorsel) colorsel.addEventListener("click", (e) => handleColorClick(colorsel, e, rerender));
 });
 document.querySelector('.filters[data-prefix="mkt"] .f-dir').onclick = (e) => {
   const b = e.currentTarget;

@@ -509,35 +509,12 @@ $("btn-load-set").onclick = async () => {
   }
 };
 
-// The active colour facets: selected WUBRG letters plus the colorless/multi
-// toggles. A card matches if it satisfies ANY active facet (so e.g. W + Multi
-// shows white cards and multicolour cards).
-function activeColorFilter() {
-  const on = Array.from($("picker-colors").querySelectorAll(".cbtn.active"));
-  return {
-    colors: on.filter((b) => b.dataset.color).map((b) => b.dataset.color),
-    colorless: on.some((b) => b.dataset.facet === "colorless"),
-    multi: on.some((b) => b.dataset.facet === "multi"),
-  };
-}
-function matchesColors(card, f) {
-  if (!f.colors.length && !f.colorless && !f.multi) return true; // no filter
-  const cc = card.colors || "";
-  if (f.colors.some((col) => cc.includes(col))) return true;
-  if (f.colorless && cc === "") return true;
-  if (f.multi && cc.length >= 2) return true;
-  return false;
-}
-// Little coloured pips for a card's colours ("" = a single colorless pip).
-function colorPips(colors) {
-  if (!colors) return `<span class="pip pip-C" title="Colorless">C</span>`;
-  return colors.split("").map((c) => `<span class="pip pip-${c}" title="${c}">${c}</span>`).join("");
-}
-
+// Colour-identity filter — shared with the player pages (see util.js for the
+// at-most / at-least / exactly semantics).
 function shownPickerCards() {
   const q = $("picker-filter").value.trim().toLowerCase();
-  const f = activeColorFilter();
-  return pickerCards.filter((c) => (!q || c.name.toLowerCase().includes(q)) && matchesColors(c, f));
+  const f = readColorFilter($("picker-colors"));
+  return pickerCards.filter((c) => (!q || c.name.toLowerCase().includes(q)) && matchesColorIdentity(c, f));
 }
 
 function renderPicker() {
@@ -564,14 +541,9 @@ function renderPicker() {
 }
 
 $("picker-filter").oninput = renderPicker;
-// Toggle colour facets (the ✕ clears them all), then re-render.
-$("picker-colors").addEventListener("click", (e) => {
-  const b = e.target.closest(".cbtn");
-  if (!b) return;
-  if (b.dataset.facet === "clear") $("picker-colors").querySelectorAll(".cbtn.active").forEach((x) => x.classList.remove("active"));
-  else b.classList.toggle("active");
-  renderPicker();
-});
+// Toggle colour buttons (the ✕ clears them all), or change the match mode.
+$("picker-colors").addEventListener("click", (e) => handleColorClick($("picker-colors"), e, renderPicker));
+$("picker-colors").addEventListener("change", (e) => { if (e.target.classList.contains("f-cmode")) renderPicker(); });
 $("btn-add-all").onclick = () => addToCardList(shownPickerCards().map((c) => ({ name: c.name, qty: 1 })));
 
 // Parse the textarea into ordered {qty,name} card rows (ignoring comments/blanks).

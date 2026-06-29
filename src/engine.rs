@@ -295,6 +295,8 @@ impl Game {
                     type_line: pc.type_line.clone(),
                     cmc: pc.cmc,
                     mana_cost: pc.mana_cost.clone(),
+                    colors: pc.colors.clone(),
+                    color_identity: pc.color_identity.clone(),
                 });
                 card_order.push(id);
                 id
@@ -779,6 +781,8 @@ impl Game {
             type_line: pc.type_line.clone(),
             cmc: pc.cmc,
             mana_cost: pc.mana_cost.clone(),
+            colors: pc.colors.clone(),
+            color_identity: pc.color_identity.clone(),
         });
         // Insert into the already-sorted display order at its place by name,
         // instead of re-sorting the whole vector on every add.

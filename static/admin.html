@@ -110,14 +110,18 @@
             <div id="picker-tools" class="picker-tools hidden">
               <input id="picker-filter" type="search" placeholder="search cards by name…" />
               <button id="btn-add-all" type="button" class="ghost">Add all shown ×1</button>
-              <div id="picker-colors" class="picker-colors" title="Filter by colour — shows cards matching any selected">
+              <div id="picker-colors" class="picker-colors" title="Filter by colour identity">
+                <select class="f-cmode" title="Colour-identity match: at most / at least / exactly the chosen colours">
+                  <option value="atmost">⊆ at most</option>
+                  <option value="atleast">⊇ at least</option>
+                  <option value="exactly">= exactly</option>
+                </select>
                 <button type="button" class="cbtn" data-color="W" title="White">W</button>
                 <button type="button" class="cbtn" data-color="U" title="Blue">U</button>
                 <button type="button" class="cbtn" data-color="B" title="Black">B</button>
                 <button type="button" class="cbtn" data-color="R" title="Red">R</button>
                 <button type="button" class="cbtn" data-color="G" title="Green">G</button>
                 <button type="button" class="cbtn" data-facet="colorless" title="Colorless">C</button>
-                <button type="button" class="cbtn" data-facet="multi" title="Multicolored (2+ colours)">Multi</button>
                 <button type="button" class="cbtn cbtn-clear" data-facet="clear" title="Clear colour filter">✕</button>
               </div>
             </div>

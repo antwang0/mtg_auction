@@ -37,6 +37,14 @@ pub struct Card {
     pub cmc: Option<f64>,
     /// Mana cost string, e.g. "{2}{G}".
     pub mana_cost: Option<String>,
+    /// Canonical `WUBRG` colour string (empty = colorless), for drawing pips.
+    /// Defaulted so saves written before colours were tracked still load.
+    #[serde(default)]
+    pub colors: String,
+    /// Canonical `WUBRG` colour-identity string (empty = colorless), for the
+    /// colour filter. Defaulted for backward-compatible save loading.
+    #[serde(default)]
+    pub color_identity: String,
 }
 
 /// One card available to be opened in a pack, before it's interned into the
@@ -52,8 +60,12 @@ pub struct PoolCard {
     pub cmc: Option<f64>,
     pub mana_cost: Option<String>,
     /// The card's colors as a canonical `WUBRG`-ordered string (empty =
-    /// colorless), e.g. `"WU"`. Used for the card-pool picker's colour filter.
+    /// colorless), e.g. `"WU"`. Used to draw colour pips.
     pub colors: String,
+    /// The card's colour *identity* as a canonical `WUBRG`-ordered string
+    /// (empty = colorless). Used for the colour filter (at most / at least /
+    /// exactly).
+    pub color_identity: String,
 }
 
 /// The set of cards a game draws its packs from.
@@ -122,6 +134,9 @@ impl CardPool {
                         type_line: Some(type_line.to_string()),
                         cmc: Some(cmc),
                         mana_cost: None,
+                        // Offline sample cards have no separate identity data,
+                        // so identity mirrors the printed colours.
+                        color_identity: colors.clone(),
                         colors,
                     }
                 })

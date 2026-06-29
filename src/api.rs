@@ -98,6 +98,11 @@ pub struct CardView {
     type_line: Option<String>,
     cmc: Option<f64>,
     mana_cost: Option<String>,
+    /// Canonical `WUBRG` colour string (empty = colorless), for drawing pips.
+    colors: String,
+    /// Canonical `WUBRG` colour-identity string (empty = colorless), for the
+    /// colour filter.
+    color_identity: String,
     /// Total copies of this card held across all players.
     supply: u32,
 }
@@ -253,6 +258,8 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
                 type_line: c.type_line.clone(),
                 cmc: c.cmc,
                 mana_cost: c.mana_cost.clone(),
+                colors: c.colors.clone(),
+                color_identity: c.color_identity.clone(),
                 supply: supply.get(id).copied().unwrap_or(0),
             }
         })
@@ -498,8 +505,11 @@ pub struct SetCard {
     rarity: Rarity,
     ref_price: Option<Cents>,
     /// Canonical `WUBRG`-ordered colour string (empty = colorless), for the
-    /// picker's colour filter.
+    /// picker's colour pips.
     colors: String,
+    /// Canonical `WUBRG`-ordered colour-identity string (empty = colorless),
+    /// for the picker's colour filter.
+    color_identity: String,
 }
 
 #[derive(Serialize)]
@@ -526,7 +536,7 @@ pub async fn get_set_cards(State(state): State<AppState>, headers: HeaderMap, Qu
         .chain(&pool.uncommons)
         .chain(&pool.rares)
         .chain(&pool.mythics)
-        .map(|pc| SetCard { name: pc.name.clone(), rarity: pc.rarity, ref_price: pc.ref_price, colors: pc.colors.clone() })
+        .map(|pc| SetCard { name: pc.name.clone(), rarity: pc.rarity, ref_price: pc.ref_price, colors: pc.colors.clone(), color_identity: pc.color_identity.clone() })
         .collect();
     cards.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(Json(SetCardsResponse { set_name: pool.set_name, cards }))
