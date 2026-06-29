@@ -1036,8 +1036,13 @@ function tickTimer() {
   if (!isTrading(state) || !timerDeadline) { el.textContent = ""; el.classList.remove("urgent"); return; }
   const rem = timerDeadline - (Math.floor(Date.now() / 1000) + clockSkew);
   if (rem <= 0) { el.textContent = "⏱ closing…"; el.classList.add("urgent"); return; }
-  const m = Math.floor(rem / 60), s = rem % 60;
-  el.textContent = `⏱ ${m}:${String(s).padStart(2, "0")}`;
+  const d = Math.floor(rem / 86400), h = Math.floor((rem % 86400) / 3600);
+  const m = Math.floor((rem % 3600) / 60), s = rem % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  // Roll up into days/hours for long rounds; keep the ticking seconds once
+  // we're under an hour, where they actually matter.
+  const t = d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  el.textContent = `⏱ ${t}`;
   el.classList.toggle("urgent", rem <= 10);
 }
 setInterval(tickTimer, 1000);
