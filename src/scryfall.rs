@@ -116,7 +116,13 @@ async fn fetch_collection(client: &reqwest::Client, names: &[&str]) -> Result<Ha
     let mut out: HashMap<String, PoolCard> = HashMap::new();
     let chunks: Vec<&[&str]> = names.chunks(75).collect();
     for (i, chunk) in chunks.iter().enumerate() {
-        let body = CollectionBody { identifiers: chunk.iter().map(|&name| Identifier { name }).collect() };
+        // Scryfall's collection endpoint doesn't match the full "A // B" name of
+        // multi-face cards (split / adventure / omen / transform) — only a single
+        // face name. Look each card up by its front-face name; single-face names
+        // are unchanged.
+        let body = CollectionBody {
+            identifiers: chunk.iter().map(|&name| Identifier { name: front_face_name(name) }).collect(),
+        };
         let resp = client
             .post("https://api.scryfall.com/cards/collection")
             .header("Accept", "application/json")
@@ -129,14 +135,30 @@ async fn fetch_collection(client: &reqwest::Client, names: &[&str]) -> Result<Ha
         }
         let parsed: CollectionResponse = resp.json().await.map_err(|e| format!("unexpected Scryfall response: {e}"))?;
         for card in parsed.data {
+            // Capture face names before the card is consumed, so a decklist can
+            // refer to the card by its full "A // B" name or by either face.
+            let face_names: Vec<String> = card
+                .card_faces
+                .as_ref()
+                .map(|fs| fs.iter().filter_map(|f| f.name.clone()).collect())
+                .unwrap_or_default();
             let pc = pool_card_from(card);
-            out.insert(pc.name.to_lowercase(), pc);
+            for fname in face_names {
+                out.entry(fname.to_lowercase()).or_insert_with(|| pc.clone());
+            }
+            out.insert(pc.name.to_lowercase(), pc); // canonical name wins
         }
         if i + 1 < chunks.len() {
             tokio::time::sleep(Duration::from_millis(100)).await; // be polite between requests
         }
     }
     Ok(out)
+}
+
+/// The front-face (or whole) name for a Scryfall lookup: the part before the
+/// `//` separator that multi-face card names use.
+fn front_face_name(name: &str) -> &str {
+    name.split("//").next().map_or(name, str::trim)
 }
 
 #[derive(Deserialize)]
@@ -206,6 +228,9 @@ fn parse_price_cents(s: &str) -> Option<i64> {
 
 #[derive(Deserialize)]
 struct CardFace {
+    /// The face's own name, e.g. `"Riling Dawnbreaker"` for a `//` card.
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     image_uris: Option<ImageUris>,
 }
@@ -370,6 +395,14 @@ mod tests {
         assert_eq!(canonical_colors(None, Some("{1}{W}{U}")), "WU");
         assert_eq!(canonical_colors(None, Some("{3}")), ""); // colorless cost
         assert_eq!(canonical_colors(None, None), "");
+    }
+
+    #[test]
+    fn front_face_name_strips_the_double_slash() {
+        use super::front_face_name;
+        assert_eq!(front_face_name("Lightning Bolt"), "Lightning Bolt");
+        assert_eq!(front_face_name("Riling Dawnbreaker // Signaling Roar"), "Riling Dawnbreaker");
+        assert_eq!(front_face_name("Fire//Ice"), "Fire"); // no surrounding spaces
     }
 
     #[test]
