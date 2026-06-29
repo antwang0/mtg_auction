@@ -26,7 +26,8 @@
 
   <main>
     <section id="setup" class="card">
-      <h2>New Game</h2>
+      <details id="setup-details" open>
+      <summary id="setup-toggle">New Game</summary>
       <label class="players-label">Players <span class="muted">(first listed is the host)</span></label>
       <div id="players-list" class="players-list"></div>
       <button id="btn-add-player-row" type="button" class="ghost add-player-btn">+ Add player</button>
@@ -165,6 +166,7 @@
       <p id="setup-preview" class="setup-preview"></p>
       <button id="btn-setup" class="primary">Open packs &amp; deal</button>
       <p class="muted">The first player listed is the host. Scryfall sets are pulled by code from <a href="https://scryfall.com/sets" target="_blank" rel="noopener">Scryfall</a> (e.g. <code>dom</code>, <code>mh3</code>); the card list deals exactly those cards. Resetting a game in progress requires the current host token.</p>
+      </details>
     </section>
 
     <section id="tokens" class="card hidden">

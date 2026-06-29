@@ -5,6 +5,7 @@ let authToken = localStorage.getItem(TOKEN_KEY) || "";
 let state = null;
 let timerDeadline = null;
 let clockSkew = 0;
+let prevInGame = null; // tracks phase transitions for the New Game form's collapse
 
 // isTrading / phaseLabel live in util.js (shared with app.js).
 
@@ -66,6 +67,15 @@ async function refresh() {
 function render() {
   if (!state) return;
   const inGame = state.phase !== "setup";
+
+  // Once a game exists, demote the New Game form: relabel it as a reset action
+  // and move it below the live management sections (collapsing it on the
+  // transition, but never fighting the host once they re-open it).
+  const setupSection = $("setup"), main = setupSection.parentElement;
+  $("setup-toggle").textContent = inGame ? "⚠ Start a new game (resets the current one)" : "New Game";
+  if (inGame && setupSection !== main.lastElementChild) main.appendChild(setupSection);
+  else if (!inGame && setupSection !== main.firstElementChild) main.insertBefore(setupSection, main.firstElementChild);
+  if (prevInGame !== inGame) { $("setup-details").open = !inGame; prevInGame = inGame; }
 
   if (!inGame) {
     $("status").textContent = "No game in progress.";
@@ -643,6 +653,7 @@ $("btn-setup").onclick = async () => {
     const host = resp.players.find((p) => p.admin) || resp.players[0];
     setToken(host.token);
     showTokens(resp.players);
+    $("setup-details").open = false; // tuck the form away now a game is running
     await refresh();
   } catch (e) {
     toastError(e.message);
