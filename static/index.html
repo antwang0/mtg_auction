@@ -33,11 +33,11 @@
 
     <div id="game" class="hidden">
       <nav class="tabs">
-        <button class="tab active" data-tab="home">Home</button>
+        <button class="tab active" data-tab="home">Home <span id="todo-badge" class="tab-badge hidden"></span></button>
         <button class="tab" data-tab="inventory">Inventory</button>
         <button class="tab" data-tab="market">Market</button>
         <button class="tab" data-tab="ladder">Ladder</button>
-        <button class="tab" data-tab="todo">TODO <span id="todo-badge" class="tab-badge hidden"></span></button>
+        <button class="tab" data-tab="calendar">Calendar</button>
       </nav>
 
       <!-- ===== HOME TAB ===== -->
@@ -52,10 +52,20 @@
             <div id="home-orders"></div>
           </section>
         </div>
-        <section class="card">
-          <h2>Calendar <span class="muted">— your availability and scheduled games this week onward</span></h2>
-          <div id="home-calendar" class="calwrap"></div>
-        </section>
+        <div class="columns">
+          <section class="card">
+            <h2>To-do</h2>
+            <ul id="todo-list" class="todo-list"></ul>
+
+            <h3>Deliveries <span class="muted">— hand off / pick up cards within 2 days of a trade</span></h3>
+            <div id="todo-deliveries"></div>
+          </section>
+          <section class="card">
+            <h2>Schedule</h2>
+            <p class="muted">Auction phase deadlines and your scheduled ladder games.</p>
+            <div id="todo-schedule"></div>
+          </section>
+        </div>
       </div>
 
       <!-- ===== INVENTORY TAB ===== -->
@@ -255,23 +265,12 @@
         </div>
       </div>
 
-      <div id="tab-todo" class="tabpane hidden">
-        <div class="columns">
-          <section class="card">
-            <h2>To-do</h2>
-            <ul id="todo-list" class="todo-list"></ul>
-
-            <h3>Deliveries <span class="muted">— hand off / pick up cards within 2 days of a trade</span></h3>
-            <div id="todo-deliveries"></div>
-          </section>
-          <section class="card">
-            <h2>Schedule</h2>
-            <p class="muted">Auction phase deadlines and your scheduled ladder games.</p>
-            <div id="todo-schedule"></div>
-            <h3>Calendar <span class="muted">— this week onward</span></h3>
-            <div id="todo-calendar" class="calwrap"></div>
-          </section>
-        </div>
+      <!-- ===== CALENDAR TAB ===== -->
+      <div id="tab-calendar" class="tabpane hidden">
+        <section class="card">
+          <h2>Calendar <span class="muted">— your availability ● and scheduled games 🎲</span></h2>
+          <div id="cal-month" class="cal-month"></div>
+        </section>
       </div>
     </div>
   </main>

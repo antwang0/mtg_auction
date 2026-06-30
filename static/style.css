@@ -542,6 +542,23 @@ table.cal .cal-day { white-space: nowrap; color: var(--muted); padding-right: 0.
 .cal-static .cal-chip.game { border-color: var(--accent); }
 .cal-game { font-size: 0.95em; }
 
+/* Calendar tab: month grid. */
+.cal-month-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.cal-month-label { font-size: 1.1rem; min-width: 11rem; }
+.cal-month-head .cal-today { margin-left: auto; }
+table.cal-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+table.cal-grid th { padding: 0.3rem; font-size: 0.78rem; color: var(--muted); font-weight: 600; text-align: center; }
+.cal-cell, .cal-empty { border: 1px solid var(--line); height: 4.4rem; vertical-align: top; padding: 0.25rem 0.3rem; }
+.cal-empty { background: var(--panel2); opacity: 0.4; }
+.cal-date { font-size: 0.8rem; color: var(--muted); font-family: var(--mono); }
+.cal-cell.today { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cal-cell.today .cal-date { color: var(--accent); font-weight: 700; }
+.cal-marks { display: flex; flex-wrap: wrap; gap: 0.15rem; margin-top: 0.2rem; }
+.cal-dot { display: inline-flex; align-items: center; justify-content: center; min-width: 1.1em; height: 1.1em; padding: 0 0.15em; border-radius: 3px; font-size: 0.66rem; font-weight: 700; font-family: var(--mono); }
+.cal-dot.avail { background: var(--buy); color: #06281c; }
+.cal-dot.game { background: transparent; font-size: 0.85rem; }
+@media (max-width: 620px) { .cal-cell, .cal-empty { height: 3.2rem; } .cal-month-label { min-width: 7rem; } }
+
 /* Home summary stat tiles + compact tables. */
 .stat-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.8rem; }
 .stat { flex: 1 1 5.5rem; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 0.5rem 0.7rem; }

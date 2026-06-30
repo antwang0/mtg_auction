@@ -86,13 +86,17 @@ async fn main() {
     };
     println!("Auction house open at http://{addr}");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("server");
+    // Race the server against Ctrl-C rather than using `with_graceful_shutdown`:
+    // the `/api/events` SSE stream holds connections open indefinitely, so a
+    // graceful drain would never finish — the server would print "Shutting down"
+    // and hang. Game state is persisted after every change, so dropping live
+    // connections on exit loses nothing.
+    tokio::select! {
+        r = axum::serve(listener, app) => r.expect("server"),
+        _ = shutdown_signal() => println!("\nShutting down."),
+    }
 }
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
-    println!("\nShutting down.");
 }

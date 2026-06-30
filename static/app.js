@@ -22,6 +22,7 @@ let uiRestored = false;
 let ladder = null;
 let availSet = new Set();   // slot ids I've toggled on (edit buffer)
 let availDirty = false;     // unsaved availability edits pending
+let calYear = null, calMonth = null; // month shown in the Calendar tab grid
 
 const RARITY_RANK = { common: 0, uncommon: 1, rare: 2, mythic: 3 };
 const RARITIES = ["common", "uncommon", "rare", "mythic"];
@@ -147,6 +148,7 @@ function render() {
   renderMyOrders();
   renderHome();
   renderTodo();
+  renderMonthCalendar();
   if (modalCardId !== null) renderModalInfo();
 
   const live = isTrading(state);
@@ -221,7 +223,6 @@ function stat(label, value) {
 function renderHome() {
   renderHomeCards();
   renderHomeOrders();
-  renderCalendar("home-calendar", { editable: false, fromWeekStart: true });
 }
 
 function renderHomeCards() {
@@ -381,7 +382,6 @@ function renderTodo() {
   renderTodoChecklist();
   renderDeliveries();
   renderTodoSchedule();
-  renderCalendar("todo-calendar", { editable: false, fromWeekStart: true });
 }
 
 // Action items the player still needs to handle (used for the list and badge).
@@ -498,8 +498,8 @@ function renderLadder() {
   renderCalendar("l-calendar", { editable: true });
   renderMyMatches();
   renderAllMatches();
-  renderHome();  // home calendar + summaries depend on ladder data
-  renderTodo();  // schedule + calendar sections depend on ladder data
+  renderMonthCalendar(); // the Calendar tab's month grid depends on ladder data
+  renderTodo();          // the schedule section depends on ladder data
 
   // ELO standings.
   const tb = $("t-standings").querySelector("tbody");
@@ -597,6 +597,88 @@ function renderCalendar(targetId = "l-calendar", { editable = true, fromWeekStar
   cal.innerHTML = html + `</tbody></table>`;
 }
 
+// A proper month grid for the Calendar tab: one cell per day, with a dot per
+// block you're free (M/E) and 🎲 for scheduled games. Prev / next / today
+// navigate months so you can look ahead to next month at a glance.
+function renderMonthCalendar() {
+  const box = $("cal-month");
+  if (!box) return;
+  if (!(state && state.me != null)) { box.innerHTML = `<p class="muted">Log in to see your calendar.</p>`; return; }
+  if (!ladder) { box.innerHTML = `<p class="muted">Loading schedule…</p>`; return; }
+  const blocks = ladder.blocks || [9, 21];
+  const nb = blocks.length;
+  const now = ladder.server_now || Math.floor(Date.now() / 1000);
+  if (calYear == null) { const t = new Date(now * 1000); calYear = t.getFullYear(); calMonth = t.getMonth(); }
+  const me = state.me;
+
+  // Bucket your availability and scheduled games by local day.
+  const availByDay = new Map();
+  (ladder.my_availability || []).forEach((slot) => {
+    const block = ((slot % nb) + nb) % nb;
+    const start = Math.floor(slot / nb) * 86400 + blocks[block] * 3600;
+    const key = localDayKey(start);
+    if (!availByDay.has(key)) availByDay.set(key, []);
+    availByDay.get(key).push(block);
+  });
+  const gamesByDay = new Map();
+  (ladder.matches || []).forEach((m) => {
+    if ((m.a === me || m.b === me) && m.status === "scheduled") {
+      const key = localDayKey(m.slot_start);
+      if (!gamesByDay.has(key)) gamesByDay.set(key, []);
+      gamesByDay.get(key).push({ opp: m.a === me ? m.b_name : m.a_name, start: m.slot_start });
+    }
+  });
+
+  const first = new Date(calYear, calMonth, 1);
+  const monthLabel = first.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const startWeekday = first.getDay(); // 0 = Sunday
+  const todayKey = localDayKey(now);
+  const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  let html =
+    `<div class="cal-month-head">` +
+      `<button type="button" class="cbtn cal-prev" title="previous month">‹</button>` +
+      `<b class="cal-month-label">${monthLabel}</b>` +
+      `<button type="button" class="cbtn cal-next" title="next month">›</button>` +
+      `<button type="button" class="cbtn cal-today" title="jump to this month">Today</button>` +
+    `</div>` +
+    `<table class="cal-grid"><thead><tr>${dow.map((d) => `<th>${d}</th>`).join("")}</tr></thead><tbody>`;
+
+  let dayNum = 1;
+  for (let week = 0; dayNum <= daysInMonth; week++) {
+    html += "<tr>";
+    for (let col = 0; col < 7; col++) {
+      const idx = week * 7 + col;
+      if (idx < startWeekday || dayNum > daysInMonth) { html += `<td class="cal-empty"></td>`; continue; }
+      const cell = new Date(calYear, calMonth, dayNum);
+      const key = `${cell.getFullYear()}-${cell.getMonth()}-${cell.getDate()}`;
+      const avail = (availByDay.get(key) || []).slice().sort((a, b) => a - b);
+      const gms = (gamesByDay.get(key) || []).slice().sort((a, b) => a.start - b.start);
+      const isToday = key === todayKey;
+      let marks = avail.map((b) => {
+        const nm = blockName(b, nb);
+        return `<span class="cal-dot avail" title="free ${esc(nm || "this block")}">${esc((nm || "•")[0])}</span>`;
+      }).join("");
+      marks += gms.map((g) => `<span class="cal-dot game" title="game vs ${esc(g.opp)} · ${localTimeLabel(g.start)}">🎲</span>`).join("");
+      html += `<td class="cal-cell${isToday ? " today" : ""}"><div class="cal-date">${dayNum}</div>` +
+        (marks ? `<div class="cal-marks">${marks}</div>` : "") + `</td>`;
+      dayNum++;
+    }
+    html += "</tr>";
+  }
+  box.innerHTML = html + `</tbody></table>`;
+}
+
+// Move the Calendar tab's month grid (delta months; 0 = back to this month).
+function shiftCalMonth(delta) {
+  const now = (ladder && ladder.server_now) || Math.floor(Date.now() / 1000);
+  const t = new Date(now * 1000);
+  if (calYear == null || delta === 0) { calYear = t.getFullYear(); calMonth = t.getMonth(); }
+  if (delta) { const d = new Date(calYear, calMonth + delta, 1); calYear = d.getFullYear(); calMonth = d.getMonth(); }
+  renderMonthCalendar();
+}
+
 // The logged-in player's own matches, with report / confirm / cancel controls.
 function renderMyMatches() {
   const box = $("l-mymatches");
@@ -671,6 +753,13 @@ $("l-calendar").addEventListener("click", (e) => {
   if (availSet.has(slot)) availSet.delete(slot); else availSet.add(slot);
   availDirty = true;
   chip.classList.toggle("on");
+});
+
+// Calendar tab: month navigation.
+$("cal-month").addEventListener("click", (e) => {
+  if (e.target.closest(".cal-prev")) shiftCalMonth(-1);
+  else if (e.target.closest(".cal-next")) shiftCalMonth(1);
+  else if (e.target.closest(".cal-today")) shiftCalMonth(0);
 });
 
 $("l-avail-save").onclick = async () => {
@@ -1126,7 +1215,7 @@ $$(".tab").forEach((t) => (t.onclick = () => {
   $("tab-inventory").classList.toggle("hidden", activeTab !== "inventory");
   $("tab-market").classList.toggle("hidden", activeTab !== "market");
   $("tab-ladder").classList.toggle("hidden", activeTab !== "ladder");
-  $("tab-todo").classList.toggle("hidden", activeTab !== "todo");
+  $("tab-calendar").classList.toggle("hidden", activeTab !== "calendar");
 }));
 
 // Confirm receipt of an incoming delivery.
