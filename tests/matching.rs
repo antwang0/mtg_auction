@@ -92,6 +92,28 @@ fn no_cross_when_bid_below_offer() {
 }
 
 #[test]
+fn cannot_place_an_order_that_crosses_your_own() {
+    let mut g = controlled_game();
+    let c = card1(&g);
+    g.players.get_mut(&1).unwrap().add_cards(c, 1);
+
+    // A resting offer to sell at $0.30.
+    g.place_offer(1, c, 1, 30).unwrap();
+    // A bid above the offer crosses (buy high while offering to sell low) — and
+    // a bid equal to it crosses too. Both are rejected.
+    assert!(g.place_bid(1, c, 1, 40).is_err(), "bid above own offer crosses");
+    assert!(g.place_bid(1, c, 1, 30).is_err(), "bid equal to own offer crosses");
+    // A bid below the offer is a legitimate spread.
+    g.place_bid(1, c, 1, 20).unwrap();
+
+    // Symmetric guard from the offer side: at or below the resting $0.20 bid
+    // crosses, above it is fine (replacing the earlier offer).
+    assert!(g.place_offer(1, c, 1, 20).is_err(), "offer equal to own bid crosses");
+    assert!(g.place_offer(1, c, 1, 10).is_err(), "offer below own bid crosses");
+    g.place_offer(1, c, 1, 25).unwrap();
+}
+
+#[test]
 fn mid_rounds_half_up() {
     let mut g = controlled_game();
     let c = card1(&g);
@@ -146,9 +168,11 @@ fn player_never_trades_with_self() {
     let c = card1(&g);
     g.players.get_mut(&1).unwrap().add_cards(c, 1);
 
-    // A both offers and bids on the same card; should not self-match.
-    g.place_offer(1, c, 1, 10).unwrap();
-    g.place_bid(1, c, 1, 20).unwrap();
+    // Placement now rejects a crossing self-book, so insert one directly to
+    // exercise the matcher's own-offer skip as a defence-in-depth net.
+    use mtg_auction::model::Order;
+    g.offers.insert((1, c), Order { player: 1, card: c, qty: 1, price: 10 });
+    g.bids.insert((1, c), Order { player: 1, card: c, qty: 1, price: 20 });
 
     let r = g.close_round().unwrap();
     assert_eq!(r.trades.len(), 0);
@@ -188,22 +212,6 @@ fn debt_limit_allows_bidding_into_debt() {
     assert!(err.contains("available"), "{err}");
 }
 
-#[test]
-fn cannot_bid_and_offer_same_price() {
-    let mut g = controlled_game();
-    let c = card1(&g);
-    g.players.get_mut(&1).unwrap().add_cards(c, 1);
-
-    g.place_offer(1, c, 1, 10).unwrap();
-    let err = g.place_bid(1, c, 1, 10).unwrap_err();
-    assert!(err.contains("same price"), "{err}");
-
-    // A different price is fine.
-    g.place_bid(1, c, 1, 8).unwrap();
-    // Re-pricing the offer onto the bid's price is rejected too.
-    let err = g.place_offer(1, c, 1, 8).unwrap_err();
-    assert!(err.contains("same price"), "{err}");
-}
 
 #[test]
 fn order_log_records_places_and_cancels() {

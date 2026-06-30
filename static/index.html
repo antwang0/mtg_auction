@@ -33,14 +33,33 @@
 
     <div id="game" class="hidden">
       <nav class="tabs">
-        <button class="tab active" data-tab="inventory">Inventory</button>
+        <button class="tab active" data-tab="home">Home</button>
+        <button class="tab" data-tab="inventory">Inventory</button>
         <button class="tab" data-tab="market">Market</button>
         <button class="tab" data-tab="ladder">Ladder</button>
         <button class="tab" data-tab="todo">TODO <span id="todo-badge" class="tab-badge hidden"></span></button>
       </nav>
 
+      <!-- ===== HOME TAB ===== -->
+      <div id="tab-home" class="tabpane">
+        <div class="columns">
+          <section class="card">
+            <h2>Your Cards</h2>
+            <div id="home-cards"></div>
+          </section>
+          <section class="card">
+            <h2>Your Orders</h2>
+            <div id="home-orders"></div>
+          </section>
+        </div>
+        <section class="card">
+          <h2>Calendar <span class="muted">— your availability and scheduled games this week onward</span></h2>
+          <div id="home-calendar" class="calwrap"></div>
+        </section>
+      </div>
+
       <!-- ===== INVENTORY TAB ===== -->
-      <div id="tab-inventory" class="tabpane">
+      <div id="tab-inventory" class="tabpane hidden">
         <div class="columns">
           <section class="card">
             <h2>Your Table <span id="me-balance" class="pill"></span></h2>
@@ -151,6 +170,10 @@
 
       <!-- ===== MARKET TAB ===== -->
       <div id="tab-market" class="tabpane hidden">
+        <section class="card hidden" id="orders-section">
+          <h2>Your Active Orders <span id="orders-mkt-count" class="muted"></span></h2>
+          <div id="orders-gallery" class="gallery"></div>
+        </section>
         <section class="card">
           <h2>Market <span class="muted">— click a card to enlarge</span></h2>
           <div class="filters" data-prefix="mkt">
@@ -245,6 +268,8 @@
             <h2>Schedule</h2>
             <p class="muted">Auction phase deadlines and your scheduled ladder games.</p>
             <div id="todo-schedule"></div>
+            <h3>Calendar <span class="muted">— this week onward</span></h3>
+            <div id="todo-calendar" class="calwrap"></div>
           </section>
         </div>
       </div>

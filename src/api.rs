@@ -39,6 +39,7 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/deliveries/reverse", post(reverse_delivery))
         .route("/api/reports", post(add_report))
         .route("/api/reports/resolve", post(resolve_report))
+        .route("/api/reports/amend", post(amend_report))
         .route("/api/reports/delete", post(delete_report))
         .route("/api/cards/add", post(add_cards))
         .route("/api/players/add", post(add_player))
@@ -654,6 +655,26 @@ pub async fn resolve_report(State(state): State<AppState>, headers: HeaderMap, J
             return Err(ApiError::unauthorized("only the host can update reports"));
         }
         game.set_report_resolved(req.report_id, req.resolved)?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct AmendReportRequest {
+    report_id: u64,
+    kind: ReportKind,
+    text: String,
+}
+
+/// Host: amend a report's kind and text.
+pub async fn amend_report(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<AmendReportRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can update reports"));
+        }
+        game.amend_report(req.report_id, req.kind, &req.text)?;
     }
     state.save_and_notify().await;
     Ok(Json(serde_json::json!({ "ok": true })))

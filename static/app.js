@@ -13,7 +13,7 @@ let lastClearByCard = {};       // card id -> last cleared price (cents)
 let latestClearByCard = {};     // card id -> {round, best_bid, best_offer, cleared, volume}
 let clearHistByCard = {};       // card id -> [{round, price}]
 let wants = loadWants();
-let activeTab = "inventory";
+let activeTab = "home";
 let planSortKey = "rarity", planSortDir = -1;
 let timerDeadline = null, clockSkew = 0;
 let modalCardId = null;
@@ -144,6 +144,8 @@ function render() {
   renderTrades();
   renderPlan();
   renderGallery();
+  renderMyOrders();
+  renderHome();
   renderTodo();
   if (modalCardId !== null) renderModalInfo();
 
@@ -206,6 +208,73 @@ function renderHoldings(meView) {
     tr.innerHTML = `<td>${thumb(h.card)}${esc(h.name)}${offered}</td><td class="num">×${h.qty}</td>`;
     tb.appendChild(tr);
   });
+}
+
+// ---- Home tab: card & order summaries plus the calendar ----
+function myPlayerView() {
+  return (state && state.me != null) ? state.players.find((p) => p.id === state.me) : null;
+}
+function stat(label, value) {
+  return `<div class="stat"><div class="stat-val">${value}</div><div class="stat-label">${esc(label)}</div></div>`;
+}
+
+function renderHome() {
+  renderHomeCards();
+  renderHomeOrders();
+  renderCalendar("home-calendar", { editable: false, fromWeekStart: true });
+}
+
+function renderHomeCards() {
+  const box = $("home-cards");
+  if (!box) return;
+  const me = myPlayerView();
+  if (!me) { box.innerHTML = `<p class="muted">Log in to see your cards.</p>`; return; }
+  const holds = (me.holdings || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const copies = holds.reduce((s, h) => s + h.qty, 0);
+  const value = holds.reduce((s, h) => s + ((cardById[h.card] || {}).ref_price || 0) * h.qty, 0);
+  box.innerHTML =
+    `<div class="stat-row">` +
+      stat("Balance", fmtUSD(me.balance)) +
+      stat("Distinct", String(holds.length)) +
+      stat("Copies", String(copies)) +
+      stat("Ref value", fmtUSD(value)) +
+    `</div>` +
+    (holds.length
+      ? `<table class="grid mini"><thead><tr><th>Card</th><th class="num">Qty</th><th class="num">Ref $</th></tr></thead><tbody>` +
+        holds.map((h) => {
+          const c = cardById[h.card] || {};
+          const off = myOfferByCard[h.card] ? ` <span class="muted">(${myOfferByCard[h.card].qty} offered)</span>` : "";
+          return `<tr data-card="${h.card}"><td>${esc(h.name)} <span class="pips">${colorPips(c.colors || "")}</span>${off}</td>` +
+            `<td class="num">×${h.qty}</td><td class="num">${fmtUSD(c.ref_price ?? null)}</td></tr>`;
+        }).join("") +
+        `</tbody></table>`
+      : `<p class="muted">You don't hold any cards yet.</p>`);
+}
+
+function renderHomeOrders() {
+  const box = $("home-orders");
+  if (!box) return;
+  const me = myPlayerView();
+  if (!me) { box.innerHTML = `<p class="muted">Log in to see your orders.</p>`; return; }
+  const bids = state.my_bids || [], offers = state.my_offers || [];
+  const row = (o, kind) => {
+    const tag = kind === "bid"
+      ? `<span class="ord-badge buy">bid</span>` : `<span class="ord-badge sell">ask</span>`;
+    return `<tr data-card="${o.card}"><td>${tag} ${esc(o.name)}</td><td class="num">×${o.qty}</td><td class="num">@${fmtUSD(o.price)}</td></tr>`;
+  };
+  box.innerHTML =
+    `<div class="stat-row">` +
+      stat("Open bids", String(bids.length)) +
+      stat("Open offers", String(offers.length)) +
+      stat("Committed", fmtUSD(state.my_committed)) +
+      stat("Available", fmtUSD(state.my_available)) +
+    `</div>` +
+    (bids.length || offers.length
+      ? `<table class="grid mini"><tbody>` +
+        bids.slice().sort((a, b) => a.name.localeCompare(b.name)).map((o) => row(o, "bid")).join("") +
+        offers.slice().sort((a, b) => a.name.localeCompare(b.name)).map((o) => row(o, "offer")).join("") +
+        `</tbody></table>`
+      : `<p class="muted">No open orders. Place bids and offers from the Market or Inventory.</p>`);
 }
 
 function renderCardOptions(sel, items) {
@@ -312,6 +381,7 @@ function renderTodo() {
   renderTodoChecklist();
   renderDeliveries();
   renderTodoSchedule();
+  renderCalendar("todo-calendar", { editable: false, fromWeekStart: true });
 }
 
 // Action items the player still needs to handle (used for the list and badge).
@@ -425,10 +495,11 @@ function renderLadder() {
 
   // Availability: re-sync from the server unless there are unsaved edits.
   if (!availDirty) availSet = new Set(ladder.my_availability || []);
-  renderCalendar();
+  renderCalendar("l-calendar", { editable: true });
   renderMyMatches();
   renderAllMatches();
-  renderTodo(); // schedule section depends on ladder data
+  renderHome();  // home calendar + summaries depend on ladder data
+  renderTodo();  // schedule + calendar sections depend on ladder data
 
   // ELO standings.
   const tb = $("t-standings").querySelector("tbody");
@@ -451,22 +522,44 @@ function blockName(block, nb) {
   return "";
 }
 
-// Availability calendar: one row per local day, a clickable time chip per slot.
+// Local-midnight epoch of the Sunday starting the week that contains `epoch`.
+function startOfLocalWeek(epoch) {
+  const d = new Date(epoch * 1000);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay()); // back up to Sunday
+  return Math.floor(d.getTime() / 1000);
+}
+
+// Availability / schedule calendar: one row per local day, a time chip per slot.
 // Slots are grouped by their *local* day so the grid reads correctly in any
 // timezone (a 21:00 UTC slot can land on the next local morning, etc.).
-function renderCalendar() {
-  const cal = $("l-calendar");
-  if (!(state && state.me != null)) { cal.innerHTML = `<p class="muted">Log in to set your availability.</p>`; return; }
+//
+// `editable` (the Ladder tab) renders clickable chips bound to the edit buffer.
+// Read-only (Home, TODO) highlights your saved availability, marks scheduled
+// games, and — with `fromWeekStart` — begins at the start of the current week.
+function renderCalendar(targetId = "l-calendar", { editable = true, fromWeekStart = false } = {}) {
+  const cal = $(targetId);
+  if (!cal) return;
+  if (!(state && state.me != null)) { cal.innerHTML = `<p class="muted">Log in to see your calendar.</p>`; return; }
+  if (!ladder) { cal.innerHTML = `<p class="muted">Loading schedule…</p>`; return; }
   const blocks = ladder.blocks || [9, 21];
   const nb = blocks.length;
   const days = ladder.window_days || 14;
   const now = ladder.server_now || Math.floor(Date.now() / 1000);
   const todayUtc = Math.floor(now / 86400);
+  const avail = editable ? availSet : new Set(ladder.my_availability || []);
 
-  // Gather candidate slots with a day of padding each side so local-day
-  // grouping is complete near the window edges regardless of UTC offset.
+  // Your scheduled games, keyed by slot id, so they can be marked on the grid.
+  const me = state.me;
+  const games = new Map();
+  (ladder.matches || []).forEach((m) => {
+    if ((m.a === me || m.b === me) && m.status === "scheduled") games.set(m.slot, m.a === me ? m.b_name : m.a_name);
+  });
+
+  // Candidate slots, padded a week back so a from-week-start view is complete
+  // near the window edge regardless of UTC offset.
   const slots = [];
-  for (let d = -1; d <= days + 1; d++) {
+  for (let d = -7; d <= days + 1; d++) {
     for (let b = 0; b < nb; b++) {
       const slot = (todayUtc + d) * nb + b;
       slots.push({ slot, block: b, start: (todayUtc + d) * 86400 + blocks[b] * 3600 });
@@ -479,19 +572,25 @@ function renderCalendar() {
     byDay.get(key).items.push(s);
   }
   const ordered = [...byDay.values()].sort((a, b) => a.repr - b.repr);
-  const todayKey = localDayKey(now);
-  const startIdx = Math.max(0, ordered.findIndex((d) => localDayKey(d.repr) === todayKey));
+  const anchorKey = localDayKey(fromWeekStart ? startOfLocalWeek(now) : now);
+  const startIdx = Math.max(0, ordered.findIndex((d) => localDayKey(d.repr) === anchorKey));
   const visible = ordered.slice(startIdx, startIdx + days);
 
-  let html = `<table class="cal"><tbody>`;
+  let html = `<table class="cal${editable ? "" : " cal-static"}"><tbody>`;
   for (const day of visible) {
     html += `<tr><td class="cal-day">${localDayLabel(day.repr)}</td><td>`;
     day.items.sort((a, b) => a.start - b.start).forEach((s) => {
       const past = s.start <= now;
-      const on = availSet.has(s.slot);
+      const on = avail.has(s.slot);
+      const game = games.get(s.slot);
       const name = blockName(s.block, nb);
       const label = name ? `<b>${name}</b> <span class="cal-time">${localTimeLabel(s.start)}</span>` : localTimeLabel(s.start);
-      html += `<button class="cal-chip${on ? " on" : ""}" ${past ? "disabled" : `data-slot="${s.slot}"`}>${label}</button>`;
+      if (editable) {
+        html += `<button class="cal-chip${on ? " on" : ""}" ${past ? "disabled" : `data-slot="${s.slot}"`}>${label}</button>`;
+      } else {
+        const mark = game ? ` <span class="cal-game" title="game vs ${esc(game)}">🎲</span>` : "";
+        html += `<span class="cal-chip${on ? " on" : ""}${game ? " game" : ""}${past ? " past" : ""}">${label}${mark}</span>`;
+      }
     });
     html += `</td></tr>`;
   }
@@ -698,6 +797,27 @@ function renderPlan() {
   });
 }
 
+// Build a market tile element for a card (shared by the gallery and the
+// active-orders section).
+function galleryTile(c) {
+  const mine = mineOf(c);
+  const tile = document.createElement("div");
+  tile.className = "tile" + (wants.has(c.name) ? " wanted" : "") + (unaffordable(c) ? " unafford" : "");
+  tile.dataset.card = c.id;
+  const art = c.image
+    ? `<img class="tile-img" src="${esc(c.image)}" alt="" loading="lazy" />`
+    : `<div class="tile-img no-img ${rarityClass(c.rarity)}">${esc(c.name)}</div>`;
+  tile.innerHTML =
+    `<button class="want-star ${wants.has(c.name) ? "on" : ""}" data-name="${esc(c.name)}">${star(c.name)}</button>` +
+    art +
+    `<div class="tile-name">${esc(c.name)}</div>` +
+    `<div class="tile-sub muted">${esc(shortType(c.type_line))} · MV ${fmtMV(c.cmc)} <span class="pips">${colorPips(c.colors)}</span></div>` +
+    `<div class="tile-foot"><span class="${rarityClass(c.rarity)}">${c.rarity}</span><span class="num">ref ${fmtUSD(c.ref_price)}</span></div>` +
+    `<div class="tile-foot muted"><span>last ${fmtUSD(lastClearByCard[c.id] ?? null)}</span><span>sup ${c.supply}${mine ? ` · you ${mine}` : ""}</span></div>` +
+    (orderBadges(c.id) ? `<div class="tile-orders">${orderBadges(c.id)}</div>` : "");
+  return tile;
+}
+
 function renderGallery() {
   if (!state) return;
   const box = document.querySelector('.filters[data-prefix="mkt"]');
@@ -707,25 +827,23 @@ function renderGallery() {
   const rows = sortCards(state.cards.filter((c) => cardMatches(c, f)), key, dir);
   const g = $("gallery");
   g.innerHTML = "";
-  rows.forEach((c) => {
-    const mine = mineOf(c);
-    const tile = document.createElement("div");
-    tile.className = "tile" + (wants.has(c.name) ? " wanted" : "") + (unaffordable(c) ? " unafford" : "");
-    tile.dataset.card = c.id;
-    const art = c.image
-      ? `<img class="tile-img" src="${esc(c.image)}" alt="" loading="lazy" />`
-      : `<div class="tile-img no-img ${rarityClass(c.rarity)}">${esc(c.name)}</div>`;
-    tile.innerHTML =
-      `<button class="want-star ${wants.has(c.name) ? "on" : ""}" data-name="${esc(c.name)}">${star(c.name)}</button>` +
-      art +
-      `<div class="tile-name">${esc(c.name)}</div>` +
-      `<div class="tile-sub muted">${esc(shortType(c.type_line))} · MV ${fmtMV(c.cmc)} <span class="pips">${colorPips(c.colors)}</span></div>` +
-      `<div class="tile-foot"><span class="${rarityClass(c.rarity)}">${c.rarity}</span><span class="num">ref ${fmtUSD(c.ref_price)}</span></div>` +
-      `<div class="tile-foot muted"><span>last ${fmtUSD(lastClearByCard[c.id] ?? null)}</span><span>sup ${c.supply}${mine ? ` · you ${mine}` : ""}</span></div>` +
-      (orderBadges(c.id) ? `<div class="tile-orders">${orderBadges(c.id)}</div>` : "");
-    g.appendChild(tile);
-  });
+  rows.forEach((c) => g.appendChild(galleryTile(c)));
   box.querySelector(".f-count").textContent = `${rows.length} / ${state.cards.length}`;
+}
+
+// The cards the logged-in player has a live bid or offer on, shown at the top
+// of the Market tab. Hidden when logged out or there are no open orders.
+function renderMyOrders() {
+  const section = $("orders-section"), g = $("orders-gallery");
+  if (!section) return;
+  const loggedIn = state && state.me != null;
+  const ids = [...new Set([...Object.keys(myBidByCard), ...Object.keys(myOfferByCard)].map(Number))];
+  if (!loggedIn || ids.length === 0) { section.classList.add("hidden"); g.innerHTML = ""; return; }
+  const cards = ids.map((id) => cardById[id]).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  section.classList.remove("hidden");
+  g.innerHTML = "";
+  cards.forEach((c) => g.appendChild(galleryTile(c)));
+  $("orders-mkt-count").textContent = `— ${cards.length} card${cards.length === 1 ? "" : "s"}`;
 }
 
 // ---- card modal ----
@@ -780,9 +898,13 @@ function renderModalInfo() {
   modalAfford();
 }
 
-function modalAfford() {
+// `reveal` shows the over-budget warning (red, with the negative balance). It's
+// only set when the player presses Place Bid — while they're still typing an
+// amount we keep the preview neutral so a transient large number doesn't flash
+// a confusing negative indicator. Returns the computed state for the caller.
+function modalAfford(reveal = false) {
   const c = cardById[modalCardId];
-  if (!c) return;
+  if (!c) return null;
   const loggedIn = state && state.me != null;
   const live = isTrading(state);
   const qty = Math.max(0, Number($("m-qty").value) || 0);
@@ -792,24 +914,45 @@ function modalAfford() {
   const availForBid = (state ? state.my_available : 0) + existing;
   const left = availForBid - commit;
   const owned = mineOf(c);
+  const over = left < 0;
 
-  $("m-bid").disabled = !loggedIn || !live || qty < 1 || left < 0;
+  // Don't disable Place Bid just for being over budget — pressing it is what
+  // surfaces the shortfall (see modalOrder).
+  $("m-bid").disabled = !loggedIn || !live || qty < 1;
   $("m-offer").disabled = !loggedIn || !live || qty < 1 || qty > owned;
+  const hold = owned ? ` · you hold ${owned}` : ` · you don't own this`;
   const af = $("m-afford");
   if (!loggedIn) af.textContent = "Log in to trade.";
   else if (!live) af.textContent = "Auction is closed.";
-  else {
-    af.innerHTML = `Bid commits <b>${fmtUSD(commit)}</b> · ${fmtUSD(left)} left` +
-      (owned ? ` · you hold ${owned}` : ` · you don't own this`);
-  }
-  af.classList.toggle("bad", live && loggedIn && left < 0);
+  else if (over && !reveal) af.innerHTML = `Bid commits <b>${fmtUSD(commit)}</b>${hold}`;
+  else af.innerHTML = `Bid commits <b>${fmtUSD(commit)}</b> · ${fmtUSD(left)} left${hold}`;
+  af.classList.toggle("bad", live && loggedIn && over && reveal);
+  return { over, live, loggedIn, qty };
 }
 
 async function modalOrder(kind) {
   if (modalCardId == null) return;
+  const price = toCents($("m-price").value);
+  // A bid at/above your own offer (or an offer at/below your own bid) would
+  // cross — you'd trade with yourself. The server rejects it; catch it here too
+  // for instant feedback. (The matcher also never self-trades.)
+  if (kind === "bid") {
+    const a = modalAfford(true);
+    if (a && a.over) { $("m-error").textContent = "This bid is more than you can cover."; return; }
+    const o = myOfferByCard[modalCardId];
+    if (o && price >= o.price) {
+      $("m-error").textContent = `This bid would cross your own offer (${fmtUSD(o.price)}) — keep it below your offer price.`;
+      return;
+    }
+  } else if (kind === "offer") {
+    const b = myBidByCard[modalCardId];
+    if (b && price <= b.price) {
+      $("m-error").textContent = `This offer would cross your own bid (${fmtUSD(b.price)}) — keep it above your bid price.`;
+      return;
+    }
+  }
   const card = modalCardId;
   const qty = Number($("m-qty").value);
-  const price = toCents($("m-price").value);
   try {
     await api(kind === "bid" ? "/api/bid" : "/api/offer", "POST", { player: state.me, card, qty, price });
     $("m-error").textContent = "";
@@ -960,9 +1103,11 @@ $("offer-form").onsubmit = async (e) => {
   catch (e) { setError(e.message); }
 };
 
-// Modal trade controls
-$("m-qty").oninput = modalAfford;
-$("m-price").oninput = modalAfford;
+// Modal trade controls. Editing the amount clears any prior over-budget error
+// and refreshes the (neutral) preview — note modalAfford() is called with no
+// args so `reveal` stays false while typing.
+$("m-qty").oninput = () => { $("m-error").textContent = ""; modalAfford(); };
+$("m-price").oninput = () => { $("m-error").textContent = ""; modalAfford(); };
 $$(".step").forEach((b) => (b.onclick = () => {
   const cents = Math.max(0, toCents($("m-price").value) + Number(b.dataset.delta));
   $("m-price").value = (cents / 100).toFixed(2);
@@ -977,6 +1122,7 @@ $("m-offer").onclick = () => modalOrder("offer");
 $$(".tab").forEach((t) => (t.onclick = () => {
   activeTab = t.dataset.tab;
   $$(".tab").forEach((x) => x.classList.toggle("active", x === t));
+  $("tab-home").classList.toggle("hidden", activeTab !== "home");
   $("tab-inventory").classList.toggle("hidden", activeTab !== "inventory");
   $("tab-market").classList.toggle("hidden", activeTab !== "market");
   $("tab-ladder").classList.toggle("hidden", activeTab !== "ladder");

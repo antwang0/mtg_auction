@@ -151,7 +151,7 @@ async fn committed_and_available_track_bids() {
 }
 
 #[tokio::test]
-async fn bid_and_offer_same_price_rejected_over_http() {
+async fn bid_crossing_own_offer_rejected_over_http() {
     let base = spawn().await;
     let c = reqwest::Client::new();
     let (alice, _bob) = setup_game(&c, &base).await;
@@ -173,13 +173,15 @@ async fn bid_and_offer_same_price_rejected_over_http() {
         .send().await.unwrap();
     assert_eq!(offer.status(), 200);
 
+    // A bid above her own $5.00 offer crosses (she'd buy high while offering to
+    // sell low) — the server must reject it.
     let bid = c.post(format!("{base}/api/bid"))
         .header("x-token", &alice)
-        .json(&json!({ "player": 1, "card": owned, "qty": 1, "price": 500 }))
+        .json(&json!({ "player": 1, "card": owned, "qty": 1, "price": 600 }))
         .send().await.unwrap();
     assert_eq!(bid.status(), 400);
     let body: Value = bid.json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("same price"));
+    assert!(body["error"].as_str().unwrap().contains("cross"));
 }
 
 #[tokio::test]

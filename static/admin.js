@@ -781,6 +781,7 @@ function renderReports() {
         <div class="report-meta">${tag} <span class="muted">— ${esc(r.reporter_name)} · ${esc(when)}</span></div>
         <div class="report-body">${esc(r.text)}</div>
         <div class="report-row-actions">
+          <button class="ghost rep-amend" data-id="${r.id}">Amend</button>
           <button class="ghost rep-toggle" data-id="${r.id}" data-resolved="${r.resolved ? 1 : 0}">${r.resolved ? "Reopen" : "Mark done"}</button>
           <button class="ghost rep-del" data-id="${r.id}">Delete</button>
         </div>
@@ -788,11 +789,40 @@ function renderReports() {
   }).join("");
 }
 
+// Swap a report row into an inline edit form (kind + text) for the host.
+function enterAmendReport(row, id) {
+  const r = ((state && state.reports) || []).find((x) => x.id === Number(id));
+  if (!r) return;
+  row.querySelector(".report-body").innerHTML =
+    `<select class="rep-kind">
+       <option value="bug"${r.kind === "bug" ? " selected" : ""}>🐞 bug</option>
+       <option value="feature"${r.kind === "feature" ? " selected" : ""}>✨ feature</option>
+     </select>
+     <textarea class="rep-text" rows="3">${esc(r.text)}</textarea>`;
+  row.querySelector(".report-row-actions").innerHTML =
+    `<button class="primary rep-save" data-id="${id}">Save</button>
+     <button class="ghost rep-cancel">Cancel</button>`;
+  row.querySelector(".rep-text").focus();
+}
+
 $("reports-list").addEventListener("click", async (e) => {
+  const amend = e.target.closest(".rep-amend");
+  const save = e.target.closest(".rep-save");
+  const cancel = e.target.closest(".rep-cancel");
   const toggle = e.target.closest(".rep-toggle");
   const del = e.target.closest(".rep-del");
+  if (amend) { enterAmendReport(amend.closest(".report-row"), amend.dataset.id); return; }
+  if (cancel) { renderReports(); return; }
   try {
-    if (toggle) {
+    if (save) {
+      const row = save.closest(".report-row");
+      await api("/api/reports/amend", "POST", {
+        report_id: Number(save.dataset.id),
+        kind: row.querySelector(".rep-kind").value,
+        text: row.querySelector(".rep-text").value,
+      });
+      await refresh();
+    } else if (toggle) {
       await api("/api/reports/resolve", "POST", { report_id: Number(toggle.dataset.id), resolved: toggle.dataset.resolved !== "1" });
       await refresh();
     } else if (del) {

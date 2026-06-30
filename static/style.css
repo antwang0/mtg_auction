@@ -536,6 +536,20 @@ table.cal .cal-day { white-space: nowrap; color: var(--muted); padding-right: 0.
 .cal-chip:disabled { opacity: 0.3; cursor: default; }
 .cal-chip .cal-time { opacity: 0.7; font-size: 0.92em; }
 .cal-chip.on .cal-time { opacity: 0.85; }
+/* Read-only calendar (Home / TODO): chips are static spans. */
+.cal-static .cal-chip { cursor: default; display: inline-block; }
+.cal-static .cal-chip.past { opacity: 0.4; }
+.cal-static .cal-chip.game { border-color: var(--accent); }
+.cal-game { font-size: 0.95em; }
+
+/* Home summary stat tiles + compact tables. */
+.stat-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.8rem; }
+.stat { flex: 1 1 5.5rem; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 0.5rem 0.7rem; }
+.stat-val { font-size: 1.15rem; font-weight: 700; font-family: var(--mono); }
+.stat-label { font-size: 0.78rem; color: var(--muted); margin-top: 0.1rem; }
+table.grid.mini { font-size: 0.85rem; }
+table.grid.mini td, table.grid.mini th { padding: 0.25rem 0.45rem; }
+table.grid.mini tr[data-card] { cursor: pointer; }
 
 /* ---- TODO tab ---- */
 .tab-badge { display: inline-block; min-width: 1.2em; padding: 0 0.3em; margin-left: 0.2em; border-radius: 999px; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 700; text-align: center; }
@@ -586,6 +600,8 @@ table.cal .cal-day { white-space: nowrap; color: var(--muted); padding-right: 0.
 .report-meta { font-size: 0.85rem; margin-bottom: 0.2rem; }
 .report-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.9rem; margin: 0.2rem 0; }
 .report-row-actions { display: flex; gap: 0.5rem; }
+.report-body .rep-kind { margin-bottom: 0.35rem; }
+.report-body .rep-text { width: 100%; box-sizing: border-box; font-family: inherit; resize: vertical; }
 .rep-bug { color: var(--sell); font-weight: 600; }
 .rep-feature { color: var(--accent); font-weight: 600; }
 .gpw-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }

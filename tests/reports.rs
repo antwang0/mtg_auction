@@ -54,6 +54,21 @@ fn host_can_resolve_reopen_and_delete() {
 }
 
 #[test]
+fn host_can_amend_kind_and_text() {
+    let mut g = game();
+    let id = g.add_report(ReportKind::Bug, "tpyo here", Some(1), 0).unwrap();
+    // Recategorise and fix the text (trimmed like a new report).
+    g.amend_report(id, ReportKind::Feature, "  please add dark mode  ").unwrap();
+    assert_eq!(g.reports[0].kind, ReportKind::Feature);
+    assert_eq!(g.reports[0].text, "please add dark mode");
+    // The original reporter is preserved across an amend.
+    assert_eq!(g.reports[0].reporter, Some(1));
+    // Same validation as filing: empty text and unknown ids are rejected.
+    assert!(g.amend_report(id, ReportKind::Bug, "   ").is_err());
+    assert!(g.amend_report(9999, ReportKind::Bug, "nope").is_err());
+}
+
+#[test]
 fn reports_survive_a_reset() {
     let mut g = game();
     g.add_report(ReportKind::Feature, "keep me", None, 0).unwrap();
