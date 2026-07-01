@@ -116,6 +116,10 @@ async fn main() {
         .route("/admin.js", get(admin_js))
         .route("/style.css", get(style_css))
         .merge(api::api_router())
+        // gzip responses (the default predicate already skips SSE streams);
+        // the state/log JSON is highly repetitive and compresses ~10x, which
+        // matters with many clients refetching on every change.
+        .layer(tower_http::compression::CompressionLayer::new())
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state.clone());
 

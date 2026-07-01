@@ -211,7 +211,19 @@ pub struct StateView {
     /// False when the most recent save failed to reach the disk (the game is
     /// effectively running without persistence); the admin page shows a warning.
     save_ok: bool,
+    /// How many rounds have closed in total. `history` only carries the most
+    /// recent [`HISTORY_ROUNDS`]; clients use this counter to detect new closes.
+    rounds_closed: usize,
 }
+
+/// How many closed rounds `/api/state` includes. History grows every round and
+/// is refetched by every client on every change, so the payload is capped;
+/// the full log stays available to the host via `/api/log`.
+const HISTORY_ROUNDS: usize = 20;
+
+/// How many ledger entries `/api/log` returns (newest last). The order log is
+/// append-only and unbounded; the admin UI only shows recent activity.
+const LOG_ORDERS: usize = 500;
 
 fn holdings_of(game: &Game, p: &Player) -> Vec<HoldingView> {
     let mut hs: Vec<HoldingView> = p
@@ -233,9 +245,32 @@ fn orders_view(game: &Game, orders: &HashMap<(PlayerId, CardId), Order>, player:
     v
 }
 
-pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Json<StateView> {
-    let game = state.lock_game();
+pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let token = token_of(&headers);
+
+    // Cheap revalidation: the ETag is the change counter plus who's asking
+    // (the payload contains per-player private fields). Browsers revalidate
+    // automatically under `Cache-Control: no-cache`, so the 30s safety polls
+    // answer 304 here without locking or serializing anything when the game
+    // hasn't changed.
+    let etag = {
+        let game = state.lock_game();
+        let me = game.player_for_token(&token);
+        format!("W/\"g{}-p{}\"", state.version(), me.map_or(-1, |id| id as i64))
+    };
+    if headers
+        .get(axum::http::header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == etag)
+    {
+        return (
+            StatusCode::NOT_MODIFIED,
+            [(axum::http::header::ETAG, etag), (axum::http::header::CACHE_CONTROL, "no-cache, private".into())],
+        )
+            .into_response();
+    }
+
+    let game = state.lock_game();
 
     // Total copies of each card in circulation (public market depth), including
     // the unallocated house inventory.
@@ -320,7 +355,7 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
         .collect();
     house.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Json(StateView {
+    let view = StateView {
         phase: game.phase,
         round: game.round,
         total_rounds: game.phase_rounds(),
@@ -329,7 +364,7 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
         set_name: game.set_name.clone(),
         cards,
         players,
-        history: game.history.clone(),
+        history: game.history[game.history.len().saturating_sub(HISTORY_ROUNDS)..].to_vec(),
         me,
         am_admin: game.is_admin(&token),
         my_has_password,
@@ -347,7 +382,13 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
         all_deliveries,
         reports,
         save_ok: state.persistence_ok(),
-    })
+        rounds_closed: game.history.len(),
+    };
+    (
+        [(axum::http::header::ETAG, etag), (axum::http::header::CACHE_CONTROL, "no-cache, private".into())],
+        Json(view),
+    )
+        .into_response()
 }
 
 /// Server-sent events: emit a tick whenever the game changes so clients refresh.
@@ -717,9 +758,11 @@ pub async fn get_log(State(state): State<AppState>, headers: HeaderMap) -> Resul
     if !game.is_admin(&token_of(&headers)) {
         return Err(ApiError::unauthorized("only the host can view the order ledger"));
     }
+    // Both logs are append-only and unbounded; send only the recent tail the
+    // admin UI actually shows (newest entries are last, as before).
     Ok(Json(LedgerView {
-        orders: game.order_log.clone(),
-        trades: game.history.clone(),
+        orders: game.order_log[game.order_log.len().saturating_sub(LOG_ORDERS)..].to_vec(),
+        trades: game.history[game.history.len().saturating_sub(HISTORY_ROUNDS)..].to_vec(),
     }))
 }
 

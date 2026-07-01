@@ -78,10 +78,13 @@ function render() {
   else if (state.phase === "finished") $("status").textContent = `${state.set_name} — game over.`;
   else $("status").textContent = `${state.set_name} — ${phaseLabel(state.phase)} · round ${state.round} of ${state.total_rounds} — debt limit ${fmtUSD(state.debt_limit)}`;
 
-  // Per-round results toast when a new round closes.
-  const histLen = state.history.length;
-  if (prevHistoryLen !== null && histLen > prevHistoryLen && loggedIn) roundToast(state.history[histLen - 1]);
-  prevHistoryLen = histLen;
+  // Per-round results toast when a new round closes. `rounds_closed` counts
+  // every close; `history` itself only carries the most recent rounds.
+  const closed = state.rounds_closed ?? state.history.length;
+  if (prevHistoryLen !== null && closed > prevHistoryLen && loggedIn && state.history.length) {
+    roundToast(state.history[state.history.length - 1]);
+  }
+  prevHistoryLen = closed;
 
   renderAuth(inGame, loggedIn);
   $("no-game").classList.toggle("hidden", inGame);

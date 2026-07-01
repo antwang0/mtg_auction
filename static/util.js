@@ -107,8 +107,16 @@ function handleColorClick(box, e, onChange) {
 //
 // `refresh` reloads state; `setConn(live)` updates the live/offline indicator.
 function startLiveUpdates({ refresh, setConn }) {
-  const SLOW_MS = 30000, FAST_MS = 3000;
-  let es = null, pollTimer = null, pollMs = 0;
+  const SLOW_MS = 30000, FAST_MS = 3000, COALESCE_MS = 250;
+  let es = null, pollTimer = null, pollMs = 0, refreshTimer = null;
+
+  // Coalesce bursts of change events (e.g. several players bidding at once)
+  // into a single refetch, so N rapid changes don't cost N full state loads
+  // per client.
+  function queueRefresh() {
+    if (refreshTimer) return;
+    refreshTimer = setTimeout(() => { refreshTimer = null; refresh(); }, COALESCE_MS);
+  }
 
   function poll(ms) {
     if (ms === pollMs && pollTimer) return; // cadence already set — don't reset it
@@ -124,7 +132,7 @@ function startLiveUpdates({ refresh, setConn }) {
       if (es) es.close();
       es = new EventSource("/api/events");
       es.onopen = up;
-      es.onmessage = () => { up(); refresh(); };
+      es.onmessage = () => { up(); queueRefresh(); };
       es.onerror = () => {
         down();
         // readyState 2 (CLOSED) means the browser won't retry on its own.

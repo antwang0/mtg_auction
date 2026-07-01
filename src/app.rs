@@ -4,7 +4,7 @@
 use crate::engine::Game;
 use crate::model::Phase;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -24,6 +24,10 @@ pub struct App {
     /// or write fails, so the host can be warned that the game is effectively
     /// running without persistence; set again by the next successful save.
     save_ok: AtomicBool,
+    /// Bumped on every change notification. Used as a cheap ETag for
+    /// `/api/state`, so unchanged safety polls answer 304 without
+    /// re-serializing the whole game.
+    version: AtomicU64,
 }
 
 impl App {
@@ -39,7 +43,13 @@ impl App {
         // the instant we come back up.
         game.arm_timer(now_epoch());
         let (tx, _rx) = broadcast::channel(64);
-        Arc::new(App { game: Mutex::new(game), tx, state_file, save_ok: AtomicBool::new(true) })
+        Arc::new(App {
+            game: Mutex::new(game),
+            tx,
+            state_file,
+            save_ok: AtomicBool::new(true),
+            version: AtomicU64::new(1),
+        })
     }
 
     /// Lock the game state, recovering from a poisoned mutex rather than
@@ -53,7 +63,13 @@ impl App {
 
     /// Notify SSE subscribers that the game changed.
     pub fn notify(&self) {
+        self.version.fetch_add(1, Ordering::Relaxed);
         let _ = self.tx.send(());
+    }
+
+    /// Current change-notification counter (see [`App::version`]).
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::Relaxed)
     }
 
     /// Serialize the current game to JSON under the lock, if persistence is on.
