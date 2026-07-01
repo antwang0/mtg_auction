@@ -65,7 +65,7 @@ async fn main() {
         .route("/admin.js", get(admin_js))
         .route("/style.css", get(style_css))
         .merge(api::api_router())
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:8787".to_string());
     let listener = match tokio::net::TcpListener::bind(&addr).await {
@@ -95,6 +95,8 @@ async fn main() {
         r = axum::serve(listener, app) => r.expect("server"),
         _ = shutdown_signal() => println!("\nShutting down."),
     }
+    // Flush a final save in case a background write was still in flight.
+    state.save();
 }
 
 async fn shutdown_signal() {

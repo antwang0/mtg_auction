@@ -294,9 +294,9 @@ impl Game {
             std::cmp::Ordering::Equal => 0.5,
         };
         let (da, db) = elo_deltas(self.players[&a].elo, self.players[&b].elo, sa, self.config.elo_k);
-        self.players.get_mut(&a).unwrap().elo += da as i64;
-        self.players.get_mut(&b).unwrap().elo += db as i64;
-        let m = self.match_mut(id).unwrap();
+        self.players.get_mut(&a).expect("match references a known player").elo += da as i64;
+        self.players.get_mut(&b).expect("match references a known player").elo += db as i64;
+        let m = self.match_mut(id).expect("match id validated by caller");
         m.status = MatchStatus::Completed;
         m.proposed_by = None;
         m.a_delta = da;
@@ -324,7 +324,7 @@ impl Game {
         m.proposed_by = None;
         m.a_delta = if m.a == canceller { -(penalty as i32) } else { 0 };
         m.b_delta = if m.b == canceller { -(penalty as i32) } else { 0 };
-        self.players.get_mut(&canceller).unwrap().elo -= penalty;
+        self.players.get_mut(&canceller).expect("canceller verified to be in the match").elo -= penalty;
         Ok(())
     }
 
@@ -370,7 +370,7 @@ impl Game {
             }
         }
 
-        let mut out: Vec<Standing> = self.player_order.iter().map(|p| by_id.remove(p).unwrap()).collect();
+        let mut out: Vec<Standing> = self.player_order.iter().map(|p| by_id.remove(p).expect("by_id was built from player_order")).collect();
         out.sort_by(|a, b| b.elo.cmp(&a.elo).then(a.name.cmp(&b.name)));
         for (i, s) in out.iter_mut().enumerate() {
             s.rank = i as u32 + 1;

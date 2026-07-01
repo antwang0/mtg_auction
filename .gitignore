@@ -20,5 +20,6 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Persisted game state
+# Persisted game state, backups, and in-flight temp files
 game_state.json
+game_state.json.*
