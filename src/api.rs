@@ -208,6 +208,9 @@ pub struct StateView {
     all_deliveries: Vec<Delivery>,
     /// Bug reports / feature requests — populated only for the host (else empty).
     reports: Vec<Report>,
+    /// False when the most recent save failed to reach the disk (the game is
+    /// effectively running without persistence); the admin page shows a warning.
+    save_ok: bool,
 }
 
 fn holdings_of(game: &Game, p: &Player) -> Vec<HoldingView> {
@@ -343,6 +346,7 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Jso
         my_deliveries,
         all_deliveries,
         reports,
+        save_ok: state.persistence_ok(),
     })
 }
 
@@ -592,6 +596,8 @@ pub async fn close_round(State(state): State<AppState>, headers: HeaderMap) -> R
         result
     };
     state.save_and_notify().await;
+    // Snapshot after a close so a catastrophe loses at most one round.
+    state.backup_on_close(now_epoch());
     Ok(Json(result))
 }
 

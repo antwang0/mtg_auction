@@ -68,6 +68,8 @@ function render() {
   if (!state) return;
   const inGame = state.phase !== "setup";
 
+  $("save-warn").classList.toggle("hidden", state.save_ok !== false);
+
   // Once a game exists, demote the New Game form: relabel it as a reset action
   // and move it below the live management sections (collapsing it on the
   // transition, but never fighting the host once they re-open it).

@@ -4,6 +4,7 @@
 use crate::engine::Game;
 use crate::model::Phase;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -19,6 +20,10 @@ pub struct App {
     pub tx: broadcast::Sender<()>,
     /// Where to persist the game as JSON, if persistence is enabled.
     pub state_file: Option<PathBuf>,
+    /// Whether the most recent save reached the disk. Cleared when a serialize
+    /// or write fails, so the host can be warned that the game is effectively
+    /// running without persistence; set again by the next successful save.
+    save_ok: AtomicBool,
 }
 
 impl App {
@@ -34,7 +39,7 @@ impl App {
         // the instant we come back up.
         game.arm_timer(now_epoch());
         let (tx, _rx) = broadcast::channel(64);
-        Arc::new(App { game: Mutex::new(game), tx, state_file })
+        Arc::new(App { game: Mutex::new(game), tx, state_file, save_ok: AtomicBool::new(true) })
     }
 
     /// Lock the game state, recovering from a poisoned mutex rather than
@@ -60,9 +65,16 @@ impl App {
             Ok(json) => Some((path, json)),
             Err(e) => {
                 tracing::warn!("could not serialize game: {e}");
+                self.save_ok.store(false, Ordering::Relaxed);
                 None
             }
         }
+    }
+
+    /// Whether persistence is healthy: either disabled on purpose, or the most
+    /// recent save made it to disk.
+    pub fn persistence_ok(&self) -> bool {
+        self.state_file.is_none() || self.save_ok.load(Ordering::Relaxed)
     }
 
     /// Persist the game to disk synchronously (no-op if persistence is disabled).
@@ -70,7 +82,7 @@ impl App {
     /// offloads the blocking write; this is for startup/tests and the timer path.
     pub fn save(&self) {
         if let Some((path, json)) = self.snapshot() {
-            write_atomic(&path, &json);
+            self.save_ok.store(write_atomic(&path, &json), Ordering::Relaxed);
         }
     }
 
@@ -79,7 +91,10 @@ impl App {
     /// are notified once it has been handed off.
     pub async fn save_and_notify(&self) {
         if let Some((path, json)) = self.snapshot() {
-            let _ = tokio::task::spawn_blocking(move || write_atomic(&path, &json)).await;
+            let ok = tokio::task::spawn_blocking(move || write_atomic(&path, &json))
+                .await
+                .unwrap_or(false);
+            self.save_ok.store(ok, Ordering::Relaxed);
         }
         self.notify();
     }
@@ -94,8 +109,20 @@ impl App {
     /// corrupted by a bug (which atomic writes don't protect against) can be
     /// recovered by copying a recent backup over it.
     pub fn backup_hourly(&self, now_epoch: u64) -> bool {
+        self.backup_stamped(&hour_string(now_epoch))
+    }
+
+    /// Write a snapshot right after a round closed, stamped to the second, so a
+    /// catastrophic failure loses at most one round of trades rather than up to
+    /// an hour. Second-stamps sort after the same hour's hourly stamp, so
+    /// pruning still keeps the newest files.
+    pub fn backup_on_close(&self, now_epoch: u64) -> bool {
+        self.backup_stamped(&second_string(now_epoch))
+    }
+
+    fn backup_stamped(&self, stamp: &str) -> bool {
         let Some(path) = self.state_file.clone() else { return false };
-        let backup = backup_path(&path, &hour_string(now_epoch));
+        let backup = backup_path(&path, stamp);
         if backup.exists() {
             return false;
         }
@@ -126,25 +153,28 @@ impl App {
             return false;
         }
         prune_backups(&path, BACKUP_KEEP);
-        tracing::info!("wrote hourly backup {}", backup.display());
+        tracing::info!("wrote backup {}", backup.display());
         true
     }
 }
 
 /// Write `data` to `path` atomically: to a sibling temp file, then rename over
 /// the target, so a crash mid-write can never corrupt an existing file.
-fn write_atomic(path: &Path, data: &str) {
+/// Returns whether the data reached the target.
+fn write_atomic(path: &Path, data: &str) -> bool {
     let mut tmp = path.to_path_buf();
     let mut name = tmp.file_name().map(|n| n.to_os_string()).unwrap_or_default();
     name.push(".tmp");
     tmp.set_file_name(name);
     if let Err(e) = std::fs::write(&tmp, data) {
         tracing::warn!("could not write {}: {e}", tmp.display());
-        return;
+        return false;
     }
     if let Err(e) = std::fs::rename(&tmp, path) {
         tracing::warn!("could not replace {}: {e}", path.display());
+        return false;
     }
+    true
 }
 
 /// Path of the dated backup beside the save file: `<name>.<stamp>.bak`.
@@ -190,6 +220,13 @@ fn hour_string(now_epoch: u64) -> String {
     let (y, m, d) = civil_from_days((now_epoch / 86_400) as i64);
     let hour = (now_epoch / 3_600) % 24;
     format!("{y:04}-{m:02}-{d:02}-{hour:02}")
+}
+
+/// `YYYY-MM-DD-HH-MM-SS` (UTC) — a second-resolution stamp for round-close
+/// backups. Shares the hourly stamp's prefix, so lexicographic order across
+/// both formats is still chronological.
+fn second_string(now_epoch: u64) -> String {
+    format!("{}-{:02}-{:02}", hour_string(now_epoch), (now_epoch / 60) % 60, now_epoch % 60)
 }
 
 /// Civil (year, month, day) from days since 1970-01-01, via Howard Hinnant's
@@ -245,7 +282,7 @@ pub async fn timer_loop(state: AppState) {
     loop {
         interval.tick().await;
         tick += 1;
-        let changed = {
+        let (changed, closed) = {
             let mut game = state.lock_game();
             let due = matches!(game.phase, Phase::Primary | Phase::Secondary)
                 && game.round_deadline.is_some_and(|dl| now_epoch() >= dl);
@@ -263,10 +300,15 @@ pub async fn timer_loop(state: AppState) {
             } else {
                 false
             };
-            due || ladder_changed
+            (due || ladder_changed, due)
         };
         if changed {
             state.save_and_notify().await;
+        }
+        // Snapshot after an auto-close so a catastrophe loses at most one round.
+        // Runs without the game lock held, as the backup takes it itself.
+        if closed {
+            state.backup_on_close(now_epoch());
         }
         // Daily backup check (cheap once-a-minute existence check); must run
         // without the game lock held, as `backup_hourly` takes it itself.
