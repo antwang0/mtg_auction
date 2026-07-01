@@ -10,6 +10,10 @@ use std::path::PathBuf;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const UTIL_JS: &str = include_str!("../static/util.js");
+const APP_CORE_JS: &str = include_str!("../static/app-core.js");
+const APP_HOME_JS: &str = include_str!("../static/app-home.js");
+const APP_MARKET_JS: &str = include_str!("../static/app-market.js");
+const APP_LADDER_JS: &str = include_str!("../static/app-ladder.js");
 const APP_JS: &str = include_str!("../static/app.js");
 const STYLE_CSS: &str = include_str!("../static/style.css");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
@@ -29,6 +33,22 @@ fn js(body: &'static str) -> impl IntoResponse {
 
 async fn util_js() -> impl IntoResponse {
     js(UTIL_JS)
+}
+
+async fn app_core_js() -> impl IntoResponse {
+    js(APP_CORE_JS)
+}
+
+async fn app_home_js() -> impl IntoResponse {
+    js(APP_HOME_JS)
+}
+
+async fn app_market_js() -> impl IntoResponse {
+    js(APP_MARKET_JS)
+}
+
+async fn app_ladder_js() -> impl IntoResponse {
+    js(APP_LADDER_JS)
 }
 
 async fn app_js() -> impl IntoResponse {
@@ -70,6 +90,10 @@ async fn main() {
         .route("/", get(index))
         .route("/admin", get(admin))
         .route("/util.js", get(util_js))
+        .route("/app-core.js", get(app_core_js))
+        .route("/app-home.js", get(app_home_js))
+        .route("/app-market.js", get(app_market_js))
+        .route("/app-ladder.js", get(app_ladder_js))
         .route("/app.js", get(app_js))
         .route("/admin.js", get(admin_js))
         .route("/style.css", get(style_css))
