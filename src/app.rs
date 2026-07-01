@@ -59,7 +59,7 @@ impl App {
         match serde_json::to_string(&*self.lock_game()) {
             Ok(json) => Some((path, json)),
             Err(e) => {
-                eprintln!("warning: could not serialize game: {e}");
+                tracing::warn!("could not serialize game: {e}");
                 None
             }
         }
@@ -108,7 +108,7 @@ impl App {
             match serde_json::to_string(&*game) {
                 Ok(json) => json,
                 Err(e) => {
-                    eprintln!("warning: could not serialize backup: {e}");
+                    tracing::warn!("could not serialize backup: {e}");
                     return false;
                 }
             }
@@ -118,15 +118,15 @@ impl App {
         name.push(".tmp");
         tmp.set_file_name(name);
         if let Err(e) = std::fs::write(&tmp, &json) {
-            eprintln!("warning: could not write backup {}: {e}", tmp.display());
+            tracing::warn!("could not write backup {}: {e}", tmp.display());
             return false;
         }
         if let Err(e) = std::fs::rename(&tmp, &backup) {
-            eprintln!("warning: could not finalize backup {}: {e}", backup.display());
+            tracing::warn!("could not finalize backup {}: {e}", backup.display());
             return false;
         }
         prune_backups(&path, BACKUP_KEEP);
-        println!("Wrote hourly backup {}", backup.display());
+        tracing::info!("wrote hourly backup {}", backup.display());
         true
     }
 }
@@ -139,11 +139,11 @@ fn write_atomic(path: &Path, data: &str) {
     name.push(".tmp");
     tmp.set_file_name(name);
     if let Err(e) = std::fs::write(&tmp, data) {
-        eprintln!("warning: could not write {}: {e}", tmp.display());
+        tracing::warn!("could not write {}: {e}", tmp.display());
         return;
     }
     if let Err(e) = std::fs::rename(&tmp, path) {
-        eprintln!("warning: could not replace {}: {e}", path.display());
+        tracing::warn!("could not replace {}: {e}", path.display());
     }
 }
 
@@ -211,11 +211,11 @@ fn load(path: &PathBuf) -> Option<Game> {
     let data = std::fs::read_to_string(path).ok()?;
     match serde_json::from_str::<Game>(&data) {
         Ok(game) => {
-            println!("Resumed saved game from {}", path.display());
+            tracing::info!("resumed saved game from {}", path.display());
             Some(game)
         }
         Err(e) => {
-            eprintln!("warning: ignoring unreadable save file {}: {e}", path.display());
+            tracing::warn!("ignoring unreadable save file {}: {e}", path.display());
             None
         }
     }

@@ -45,6 +45,15 @@ async fn style_css() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
+    // Structured logging: RUST_LOG controls the filter (default: info for us,
+    // warn for dependencies' request noise).
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,tower_http=warn".into()),
+        )
+        .init();
+
     // Persist the game to disk so a session survives a restart. Set STATE_FILE
     // to a path, or to an empty string to disable persistence.
     let state_file = match std::env::var("STATE_FILE") {
@@ -65,26 +74,27 @@ async fn main() {
         .route("/admin.js", get(admin_js))
         .route("/style.css", get(style_css))
         .merge(api::api_router())
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state.clone());
 
     let addr = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:8787".to_string());
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(listener) => listener,
         Err(e) => {
-            eprintln!("Could not bind {addr}: {e}");
+            tracing::error!("could not bind {addr}: {e}");
             match e.kind() {
-                std::io::ErrorKind::AddrInUse => eprintln!(
-                    "That port is already in use. Pick another, e.g. `BIND=127.0.0.1:8080 cargo run`."
+                std::io::ErrorKind::AddrInUse => tracing::error!(
+                    "that port is already in use. Pick another, e.g. `BIND=127.0.0.1:8080 cargo run`."
                 ),
-                std::io::ErrorKind::PermissionDenied => eprintln!(
-                    "Ports below 1024 need root. Use a higher port, e.g. `BIND=127.0.0.1:8080 cargo run`."
+                std::io::ErrorKind::PermissionDenied => tracing::error!(
+                    "ports below 1024 need root. Use a higher port, e.g. `BIND=127.0.0.1:8080 cargo run`."
                 ),
                 _ => {}
             }
             std::process::exit(1);
         }
     };
-    println!("Auction house open at http://{addr}");
+    tracing::info!("auction house open at http://{addr}");
 
     // Race the server against Ctrl-C rather than using `with_graceful_shutdown`:
     // the `/api/events` SSE stream holds connections open indefinitely, so a
@@ -93,7 +103,7 @@ async fn main() {
     // connections on exit loses nothing.
     tokio::select! {
         r = axum::serve(listener, app) => r.expect("server"),
-        _ = shutdown_signal() => println!("\nShutting down."),
+        _ = shutdown_signal() => tracing::info!("shutting down"),
     }
     // Flush a final save in case a background write was still in flight.
     state.save();
