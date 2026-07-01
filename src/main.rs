@@ -17,6 +17,9 @@ const APP_LADDER_JS: &str = include_str!("../static/app-ladder.js");
 const APP_JS: &str = include_str!("../static/app.js");
 const STYLE_CSS: &str = include_str!("../static/style.css");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
+const ADMIN_CORE_JS: &str = include_str!("../static/admin-core.js");
+const ADMIN_SETUP_JS: &str = include_str!("../static/admin-setup.js");
+const ADMIN_MANAGE_JS: &str = include_str!("../static/admin-manage.js");
 const ADMIN_JS: &str = include_str!("../static/admin.js");
 
 async fn index() -> Html<&'static str> {
@@ -53,6 +56,18 @@ async fn app_ladder_js() -> impl IntoResponse {
 
 async fn app_js() -> impl IntoResponse {
     js(APP_JS)
+}
+
+async fn admin_core_js() -> impl IntoResponse {
+    js(ADMIN_CORE_JS)
+}
+
+async fn admin_setup_js() -> impl IntoResponse {
+    js(ADMIN_SETUP_JS)
+}
+
+async fn admin_manage_js() -> impl IntoResponse {
+    js(ADMIN_MANAGE_JS)
 }
 
 async fn admin_js() -> impl IntoResponse {
@@ -95,6 +110,9 @@ async fn main() {
         .route("/app-market.js", get(app_market_js))
         .route("/app-ladder.js", get(app_ladder_js))
         .route("/app.js", get(app_js))
+        .route("/admin-core.js", get(admin_core_js))
+        .route("/admin-setup.js", get(admin_setup_js))
+        .route("/admin-manage.js", get(admin_manage_js))
         .route("/admin.js", get(admin_js))
         .route("/style.css", get(style_css))
         .merge(api::api_router())
