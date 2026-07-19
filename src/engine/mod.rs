@@ -360,7 +360,7 @@ pub const TOKEN_LEN: usize = 4;
 /// (reproducible) game seed.
 fn random_token() -> String {
     let mut bytes = [0u8; 16];
-    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
+    getrandom::fill(&mut bytes).expect("OS random source unavailable");
     use std::fmt::Write;
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in &bytes {
@@ -386,7 +386,7 @@ fn unique_token(existing: &HashMap<PlayerId, String>) -> String {
 /// A random hex salt for password hashing.
 fn random_salt() -> String {
     let mut bytes = [0u8; 8];
-    getrandom::getrandom(&mut bytes).expect("OS random source unavailable");
+    getrandom::fill(&mut bytes).expect("OS random source unavailable");
     use std::fmt::Write;
     bytes.iter().fold(String::with_capacity(16), |mut out, b| {
         let _ = write!(out, "{b:02x}");
