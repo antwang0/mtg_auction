@@ -33,8 +33,34 @@ const esc = escapeHtml;
 // Auction phase helpers (shared by both pages). The two trading phases have
 // orders open; phaseLabel gives a human label.
 function isTrading(s) { return !!s && (s.phase === "primary" || s.phase === "secondary"); }
+// Human-readable result of a completed match: the winner's name, or "Draw".
+function matchResult(m) {
+  if (m.a_wins > m.b_wins) return `${m.a_name} won`;
+  if (m.b_wins > m.a_wins) return `${m.b_name} won`;
+  return "Draw";
+}
+
+// League mode: a recurring sealed-bid bank auction instead of the two phases.
+function isLeague(s) { return !!s && s.phase === "league"; }
+// Whether the league auction is currently taking bids.
+function leagueOpen(s) { return isLeague(s) && !!s.league_open; }
 function phaseLabel(p) {
-  return p === "primary" ? "Primary (bank issue)" : p === "secondary" ? "Secondary (trading)" : p;
+  return p === "primary" ? "Primary (bank issue)" : p === "secondary" ? "Secondary (trading)" : p === "league" ? "League" : p;
+}
+
+// Format an epoch second in a fixed UTC-offset zone (the league timezone),
+// rather than the viewer's local zone: shift the instant by the offset and
+// render it as UTC, then tag it with the offset so it reads unambiguously.
+function fmtLeagueTime(epoch, offsetMins) {
+  if (epoch == null) return "—";
+  const off = offsetMins || 0;
+  const shown = new Date((epoch + off * 60) * 1000).toLocaleString(undefined, {
+    weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC",
+  });
+  const sign = off >= 0 ? "+" : "−";
+  const h = Math.floor(Math.abs(off) / 60), m = Math.abs(off) % 60;
+  const label = off === 0 ? "UTC" : `UTC${sign}${h}${m ? ":" + String(m).padStart(2, "0") : ""}`;
+  return `${shown} ${label}`;
 }
 
 // ---- colour-identity filter (shared by the player pages and the admin picker) ----

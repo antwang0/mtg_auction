@@ -20,6 +20,79 @@ function syncPoolPanes() {
 document.querySelectorAll('input[name="pool"]').forEach((r) => (r.onchange = syncPoolPanes));
 syncPoolPanes();
 
+// ---- game mode: standard vs league ----
+function selectedMode() {
+  const r = document.querySelector('input[name="mode"]:checked');
+  return r ? r.value : "standard";
+}
+// League hides everything about packs/phases/pool and shows the league pane.
+function syncModePanes() {
+  const league = selectedMode() === "league";
+  document.querySelectorAll(".mode-pane").forEach((p) => (p.hidden = p.dataset.mode !== selectedMode()));
+  document.querySelectorAll("#setup .std-only").forEach((p) => (p.hidden = league));
+  $("btn-setup").textContent = league ? "Start league" : "Open packs & deal";
+  updateLeagueHint();
+}
+document.querySelectorAll('input[name="mode"]').forEach((r) => (r.onchange = () => { syncModePanes(); setupPreview(); }));
+
+// The league schedule is expressed in a fixed timezone (a UTC-offset in
+// minutes), not each viewer's local zone. Dates entered as calendar days map to
+// an epoch *day number* (days since 1970-01-01), independent of any zone.
+function leagueTzMins() { return Number($("cfg-lg-tz").value) || 0; }
+function leagueCloseHour() { return Number(($("cfg-lg-time").value || "20:00").split(":")[0]) || 0; }
+
+// "YYYY-MM-DD" → epoch day number (0 if blank/invalid).
+function dateStrToEpochDay(s) {
+  const m = (s || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return 0;
+  return Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000);
+}
+function epochDayToDateStr(day) {
+  return new Date(day * 86400000).toISOString().slice(0, 10);
+}
+// Today's epoch day in the league timezone, and the coming Sunday from it.
+function leagueTodayDay() {
+  return Math.floor((Date.now() + leagueTzMins() * 60000) / 86400000);
+}
+function comingSundayDay() {
+  const t = leagueTodayDay();
+  const wd = ((t + 4) % 7 + 7) % 7; // 0 = Sunday
+  return t + (7 - wd) % 7;
+}
+
+// Fill the matchmaking/first-auction dates with their defaults (this Sunday /
+// next Sunday) unless the host has already set them.
+let leagueDatesTouched = false;
+function fillLeagueDateDefaults(force = false) {
+  if (leagueDatesTouched && !force) return;
+  const sun = comingSundayDay();
+  $("cfg-lg-mm").value = epochDayToDateStr(sun);
+  $("cfg-lg-first").value = epochDayToDateStr(sun + 7);
+}
+["cfg-lg-mm", "cfg-lg-first", "cfg-lg-last"].forEach((id) =>
+  $(id).addEventListener("input", () => { leagueDatesTouched = true; updateLeagueHint(); })
+);
+
+function updateLeagueHint() {
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const first = dateStrToEpochDay($("cfg-lg-first").value);
+  const last = dateStrToEpochDay($("cfg-lg-last").value);
+  const wd = first ? days[((first + 4) % 7 + 7) % 7] : "?";
+  const hh = String(leagueCloseHour()).padStart(2, "0");
+  const tz = $("cfg-lg-tz").selectedOptions[0].textContent.split(" ")[0];
+  let msg = first
+    ? `Auctions close ${wd}s at ${hh}:00 ${tz}, every ${$("cfg-lg-period").value} week(s), starting ${$("cfg-lg-first").value}.`
+    : "Set a first auction date.";
+  if (last) msg += ` Last auction ${$("cfg-lg-last").value}.`;
+  $("cfg-lg-hint").textContent = msg;
+}
+// Changing the timezone re-derives the default dates (host edits stick).
+$("cfg-lg-tz").addEventListener("change", () => { fillLeagueDateDefaults(); updateLeagueHint(); });
+$("cfg-lg-time").addEventListener("input", updateLeagueHint);
+$("cfg-lg-period").addEventListener("input", updateLeagueHint);
+fillLeagueDateDefaults(true);
+syncModePanes();
+
 // ---- player list: one input per player (first is the host) ----
 function playerNames() {
   return Array.from($("players-list").querySelectorAll(".player-name")).map((i) => i.value.trim()).filter(Boolean);
@@ -55,7 +128,66 @@ function addPlayerRow(name = "", focus = false) {
   return input;
 }
 $("btn-add-player-row").onclick = () => addPlayerRow("", true);
-["Alice", "Bob", "Carol", "Dave"].forEach((n) => addPlayerRow(n));
+const DEFAULT_PLAYERS = ["Alice", "Bob", "Carol", "Dave"];
+DEFAULT_PLAYERS.forEach((n) => addPlayerRow(n));
+
+// ---- import players from a CSV / text file ----
+// Each line is one player; the name is the first CSV field (quotes handled), so a
+// plain name list or a multi-column CSV both work. A leading header row like
+// "name" / "player" is skipped.
+function parseCsvNames(text) {
+  const names = [];
+  text.split(/\r?\n/).forEach((line) => {
+    if (!line.trim()) return;
+    const quoted = line.match(/^\s*"((?:[^"]|"")*)"/); // a leading "quoted" field
+    const raw = quoted ? quoted[1].replace(/""/g, '"') : line.split(",")[0];
+    const name = raw.trim();
+    if (name) names.push(name);
+  });
+  if (names.length && /^(name|player|players|player[ _]?name)$/i.test(names[0])) names.shift();
+  return names;
+}
+
+// Drop empty name rows (but always leave at least one field to type in).
+function pruneEmptyPlayerRows() {
+  Array.from($("players-list").children).forEach((row) => {
+    const inp = row.querySelector(".player-name");
+    if (inp && !inp.value.trim() && $("players-list").children.length > 1) row.remove();
+  });
+}
+
+$("btn-import-players").onclick = () => $("import-players-csv").click();
+$("import-players-csv").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  const msg = $("import-players-msg");
+  if (!file) return;
+  try {
+    const names = parseCsvNames(await file.text());
+    if (!names.length) { msg.textContent = "No names found in that file."; e.target.value = ""; return; }
+    // If the roster is still the untouched sample, replace it; otherwise append.
+    const current = playerNames();
+    const isDefaults = current.length === DEFAULT_PLAYERS.length && current.every((n, i) => n === DEFAULT_PLAYERS[i]);
+    if (isDefaults) $("players-list").innerHTML = "";
+    const have = new Set(playerNames().map((n) => n.toLowerCase()));
+    let added = 0, dupes = 0, capped = 0;
+    for (const name of names) {
+      if (have.has(name.toLowerCase())) { dupes++; continue; }
+      if ($("players-list").querySelectorAll(".player-name").length >= 64) { capped++; continue; }
+      addPlayerRow(name);
+      have.add(name.toLowerCase());
+      added++;
+    }
+    pruneEmptyPlayerRows();
+    markHostRow();
+    setupPreview();
+    msg.textContent = `Imported ${added} player${added === 1 ? "" : "s"}` +
+      (dupes ? `, skipped ${dupes} duplicate${dupes === 1 ? "" : "s"}` : "") +
+      (capped ? `, ${capped} over the 64-player limit` : "") + ".";
+  } catch (err) {
+    msg.textContent = "Could not read that file: " + err.message;
+  }
+  e.target.value = ""; // let the same file be re-imported
+});
 
 // A round timer entered as a number + a unit (min/hours/days) → whole seconds.
 // `id` is the number input; its unit <select> is `${id}-unit` (value = seconds
@@ -93,6 +225,7 @@ updateBlockHint();
 // form has a problem the server would reject anyway.
 function setupPreview() {
   const pool = selectedPool();
+  const league = selectedMode() === "league";
   const names = playerNames();
   const primaryRounds = Number($("cfg-primary-rounds").value);
   const secondaryRounds = Number($("cfg-secondary-rounds").value);
@@ -100,6 +233,31 @@ function setupPreview() {
 
   if (names.length < 2) problems.push("add at least 2 players");
   if (new Set(names.map((n) => n.toLowerCase())).size !== names.length) problems.push("player names must be unique");
+
+  // League games skip the pack/phase/pool settings entirely.
+  if (league) {
+    const first = dateStrToEpochDay($("cfg-lg-first").value);
+    const last = dateStrToEpochDay($("cfg-lg-last").value);
+    const mm = dateStrToEpochDay($("cfg-lg-mm").value);
+    if (!first) problems.push("set a first auction date");
+    if (last && last < first) problems.push("the last auction date is before the first");
+    if (mm && first && mm > first) problems.push("matchmaking must start on or before the first auction");
+    const el = $("setup-preview"), btn = $("btn-setup");
+    if (problems.length) {
+      el.textContent = "Can’t start yet — " + problems.join("; ") + ".";
+      el.classList.add("bad");
+      btn.disabled = true;
+    } else {
+      el.textContent =
+        `${names.length} players · league — ${$("cfg-lg-packs").value} packs each, ` +
+        `$${$("cfg-lg-stipend").value} stipend per close · matchmaking ${$("cfg-lg-mm").value || "?"}, ` +
+        `first auction ${$("cfg-lg-first").value}${last ? `, last ${$("cfg-lg-last").value}` : " (no end)"}`;
+      el.classList.remove("bad");
+      btn.disabled = false;
+    }
+    return;
+  }
+
   if (!(primaryRounds >= 1) || !(secondaryRounds >= 1)) problems.push("each phase needs at least 1 round");
 
   let opened = null, openedLabel = "opened";
@@ -243,9 +401,10 @@ function addToCardList(additions) {
 
 $("btn-setup").onclick = async () => {
   const pool = selectedPool();
+  const league = selectedMode() === "league";
   // A blank Scryfall code used to fall back to the sample set silently; make
   // the host fix it instead of quietly drafting a different pool.
-  if (pool === "scryfall" && !$("cfg-set").value.trim()) {
+  if (!league && pool === "scryfall" && !$("cfg-set").value.trim()) {
     toastError("Enter a Scryfall set code (e.g. dom), or pick another card pool source.");
     $("cfg-set").focus();
     return;
@@ -257,6 +416,15 @@ $("btn-setup").onclick = async () => {
   }
   const names = playerNames();
   const config = {
+    mode: selectedMode(),
+    league_packs_per_player: Number($("cfg-lg-packs").value) || 0,
+    weekly_stipend: toCents($("cfg-lg-stipend").value),
+    league_tz_offset_mins: leagueTzMins(),
+    league_close_hour: leagueCloseHour(),
+    league_period_weeks: Number($("cfg-lg-period").value) || 1,
+    league_first_auction_day: dateStrToEpochDay($("cfg-lg-first").value),
+    league_last_auction_day: dateStrToEpochDay($("cfg-lg-last").value),
+    league_matchmaking_start_day: dateStrToEpochDay($("cfg-lg-mm").value),
     player_names: names,
     pool_source: pool,
     set: $("cfg-set").value.trim() || "sample",
@@ -285,7 +453,7 @@ $("btn-setup").onclick = async () => {
   };
   const btn = $("btn-setup");
   btn.disabled = true;
-  btn.textContent = "Fetching & dealing…";
+  btn.textContent = league ? "Starting league…" : "Fetching & dealing…";
   try {
     const resp = await api("/api/setup", "POST", config);
     const host = resp.players.find((p) => p.admin) || resp.players[0];
@@ -296,7 +464,7 @@ $("btn-setup").onclick = async () => {
   } catch (e) {
     toastError(e.message);
   } finally {
-    btn.textContent = "Open packs & deal";
+    btn.textContent = league ? "Start league" : "Open packs & deal";
     setupPreview(); // re-enable only if the form is still valid
   }
 };

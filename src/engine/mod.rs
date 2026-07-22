@@ -6,11 +6,13 @@
 //! (settlement), and [`reports`] (bug reports / feature requests).
 
 mod deliveries;
+mod league;
 mod matching;
 mod reports;
 mod setup;
 
 pub use deliveries::DELIVERY_DEADLINE_SECS;
+pub use league::{default_league_days, league_day_of, next_league_close};
 
 use crate::model::*;
 use serde::{Deserialize, Serialize};
@@ -136,6 +138,11 @@ pub struct Game {
     pub reports: Vec<Report>,
     #[serde(default)]
     report_seq: u64,
+    /// Resting league-auction bids (league mode only). Cleared at each close.
+    #[serde(default)]
+    pub league_bids: Vec<LeagueBid>,
+    #[serde(default)]
+    league_bid_seq: u64,
 }
 
 /// The reserved player id for the auction house. It is never a real player (real
@@ -168,6 +175,8 @@ impl Default for Game {
             delivery_seq: 0,
             reports: Vec::new(),
             report_seq: 0,
+            league_bids: Vec::new(),
+            league_bid_seq: 0,
         }
     }
 }
@@ -194,8 +203,12 @@ impl Game {
 
     /// (Re)arm the round timer from the current phase's configured timer, given
     /// the current epoch second. Clears the deadline when there's no timer or the
-    /// game isn't taking orders.
+    /// game isn't taking orders. League deadlines are fixed calendar points, so
+    /// they're left alone (a restart must not clear or extend them).
     pub fn arm_timer(&mut self, now_epoch: u64) {
+        if self.phase == Phase::League {
+            return;
+        }
         let secs = self.round_seconds();
         self.round_deadline = if secs > 0 { Some(now_epoch + secs as u64) } else { None };
     }
@@ -282,6 +295,7 @@ impl Game {
         match self.phase {
             Phase::Primary | Phase::Secondary => Ok(()),
             Phase::Setup => Err("no game in progress".into()),
+            Phase::League => Err("this game runs weekly league auctions — bid from the Auction tab".into()),
             Phase::Finished => Err("the game is over".into()),
         }
     }

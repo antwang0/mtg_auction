@@ -518,9 +518,11 @@ button.copy { padding: 0.35rem 0.6rem; }
 tr.mine { background: var(--buy-dim); }
 tr.mine td { font-weight: 600; }
 #pairings table, #t-pairings table { margin-bottom: 0.8rem; }
-.report-row { display: inline-flex; align-items: center; gap: 0.3rem; }
+.report-row { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .report-row input { width: 3.2em; padding: 0.2rem 0.3rem; text-align: center; }
 .report-row button { padding: 0.25rem 0.6rem; }
+/* "Click who won" buttons. */
+.winrow { margin-top: 0.4rem; }
 #tourney-card h3, #tab-tourney h3 { margin: 0.8rem 0 0.4rem; }
 .mymatch { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 0.7rem 0.9rem; margin-bottom: 0.9rem; }
 .mymatch .report-row { margin-top: 0.55rem; }
@@ -626,3 +628,23 @@ table.grid.mini tr[data-card] { cursor: pointer; }
 .matchcard { border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.8rem; margin-bottom: 0.6rem; background: var(--panel2); }
 .matchhead { margin-bottom: 0.3rem; }
 .matchcard .report-row, .matchcard .actrow { margin-top: 0.45rem; }
+
+/* ---- league mode ---- */
+.mode-pane[hidden] { display: none; }
+#setup .std-only[hidden] { display: none; }
+.lg-bidrow { display: flex; gap: 0.35rem; margin-top: 0.4rem; }
+.lg-bidrow .lg-price { width: 100%; min-width: 0; }
+.lg-x { background: none; border: none; color: inherit; cursor: pointer; padding: 0 0.15rem; font-size: 0.85em; }
+.lg-x:hover { color: var(--sell); }
+#lg-mybids { margin-bottom: 0.8rem; }
+#manual-inv { margin: 0.8rem 0; }
+#manual-inv textarea { width: 100%; }
+
+/* ---- recurring weekly availability grid ---- */
+table.recur-grid th { font-size: 0.75rem; color: var(--muted); font-weight: 600; padding: 0.2rem 0.4rem; text-align: center; }
+.recur-cell { min-width: 3.2rem; text-align: center; }
+.cal-chip.covered { border-color: var(--buy); border-style: dashed; }
+.recur-mark { color: var(--buy); font-size: 0.85em; }
+
+/* ---- setup: player import controls ---- */
+.player-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.3rem; }

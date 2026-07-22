@@ -236,19 +236,43 @@ fn stale_matches_expire_as_no_shows() {
 }
 
 #[test]
-fn host_can_record_an_expired_match_but_not_a_completed_one() {
+fn host_can_record_an_expired_match_and_correct_a_completed_one() {
     let mut g = game(&["A", "B"]);
     prefs(&mut g, &[1, 2], 1, &[slot(1, 0)]);
     g.auto_schedule(NOW);
     let id = g.ladder.matches[0].id;
+    let (a, b) = (g.ladder.matches[0].a, g.ladder.matches[0].b);
     let start = g.ladder.matches[0].slot_start;
     g.expire_stale_matches(start + 2 * 86_400);
-    // Host resolves the no-show retroactively.
+    // Host resolves the no-show retroactively (seat A wins 2–0).
     g.force_match_result(id, 2, 0, 0).unwrap();
     assert_eq!(g.ladder.matches[0].status, MatchStatus::Completed);
-    // ELO was applied exactly once; a second override is rejected.
-    assert_eq!(g.players[&g.ladder.matches[0].a].elo, 1216);
-    assert!(g.force_match_result(id, 1, 1, 0).unwrap_err().contains("already final"));
+    assert_eq!(g.players[&a].elo, 1216);
+    assert_eq!(g.players[&b].elo, 1184);
+    // A mistaken result can be corrected: re-recording reverts the old ELO and
+    // applies the new one (a draw from an even start nets to zero).
+    g.force_match_result(id, 1, 1, 0).unwrap();
+    assert_eq!(g.ladder.matches[0].status, MatchStatus::Completed);
+    assert_eq!(g.players[&a].elo, 1200);
+    assert_eq!(g.players[&b].elo, 1200);
+}
+
+#[test]
+fn a_single_participant_report_is_final() {
+    let mut g = game(&["A", "B", "C"]);
+    prefs(&mut g, &[1, 2], 1, &[slot(1, 0)]); // only A & B available → one match
+    g.auto_schedule(NOW);
+    let m = g.ladder.matches[0].clone();
+    // A non-participant cannot report.
+    let outsider = if m.involves(3) { 1 } else { 3 };
+    assert!(g.submit_match_result(outsider, m.id, 2, 0, 0).unwrap_err().contains("not playing"));
+    // One participant reports; it's final immediately, no confirmation step.
+    g.submit_match_result(m.a, m.id, 2, 0, 0).unwrap();
+    assert_eq!(g.ladder.matches[0].status, MatchStatus::Completed);
+    assert_eq!(g.players[&m.a].elo, 1216);
+    assert_eq!(g.players[&m.b].elo, 1184);
+    // A participant can't re-report a finished match (only the host can fix it).
+    assert!(g.submit_match_result(m.b, m.id, 0, 2, 0).unwrap_err().contains("already final"));
 }
 
 #[test]
@@ -263,4 +287,39 @@ fn ladder_survives_serde_round_trip() {
     assert_eq!(g2.ladder.matches.len(), g.ladder.matches.len());
     assert_eq!(g2.players[&1].elo, g.players[&1].elo);
     assert_eq!(g2.ladder.games_per_week.get(&1), Some(&1));
+}
+
+#[test]
+fn recurring_availability_schedules_every_week() {
+    let mut g = game(&["A", "B"]);
+    // A recurring weekly pattern for one (weekday, block) — day 104 is a
+    // Wednesday — with no explicit availability slots at all.
+    let wed = mtg_auction::ladder::weekly_slot(slot(2, 0));
+    g.set_games_per_week(1, 2).unwrap();
+    g.set_games_per_week(2, 2).unwrap();
+    // Out-of-range weekly slots are dropped.
+    g.set_recurring(1, vec![999, wed]).unwrap();
+    assert_eq!(g.ladder.recurring[&1], vec![wed]);
+    g.set_recurring(2, vec![wed]).unwrap();
+
+    // Both Wednesdays in the 14-day window get a match, without re-picking slots.
+    let created = g.auto_schedule(NOW);
+    assert_eq!(created, 2, "one match on each Wednesday in the window");
+    for m in g.ladder.matches.iter().filter(|m| m.status == MatchStatus::Scheduled) {
+        assert_eq!(mtg_auction::ladder::weekly_slot(m.slot), wed);
+    }
+}
+
+#[test]
+fn recurring_and_explicit_availability_union() {
+    let mut g = game(&["A", "B"]);
+    g.set_games_per_week(1, 5).unwrap();
+    g.set_games_per_week(2, 5).unwrap();
+    // A explicit-only on a Tuesday, B recurring on the same (weekday, block):
+    // they should meet there.
+    let tue = slot(1, 0); // day 103 = Tuesday
+    g.set_availability(1, vec![tue]).unwrap();
+    g.set_recurring(2, vec![mtg_auction::ladder::weekly_slot(tue)]).unwrap();
+    assert_eq!(g.auto_schedule(NOW), 1);
+    assert_eq!(g.ladder.matches[0].slot, tue);
 }

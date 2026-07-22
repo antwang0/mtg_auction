@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Draft Auction House</title>
+  <title>MTG Tournament</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header>
-    <h1>Draft Auction House</h1>
+    <h1>MTG Tournament</h1>
     <div id="status" class="status"></div>
     <span id="round-timer" class="timer"></span>
     <span id="conn" class="conn down" title="connecting…">● offline</span>
@@ -21,7 +21,8 @@
       <button id="btn-login" class="ghost">Token</button>
       <button id="btn-setpw" class="ghost hidden">Set password</button>
       <button id="btn-logout" class="ghost hidden">Log out</button>
-      <a class="navlink" href="/admin">Admin →</a>
+      <a class="navlink" href="/matches">Matches</a>
+      <a class="navlink hidden" id="admin-link" href="/admin">Admin →</a>
     </div>
   </header>
 
@@ -35,6 +36,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="home">Home <span id="todo-badge" class="tab-badge hidden"></span></button>
         <button class="tab" data-tab="inventory">Inventory</button>
+        <button class="tab hidden" data-tab="auction">Auction</button>
         <button class="tab" data-tab="market">Market</button>
         <button class="tab" data-tab="ladder">Ladder</button>
         <button class="tab" data-tab="calendar">Calendar</button>
@@ -46,6 +48,16 @@
           <section class="card">
             <h2>Your Cards</h2>
             <div id="home-cards"></div>
+
+            <!-- League mode: manually track the cards from your physical packs. -->
+            <div id="manual-inv" class="hidden">
+              <h3>Add cards to your inventory <span class="muted">(optional — track your opened packs for planning)</span></h3>
+              <label class="cardlist-field">
+                <textarea id="inv-cardlist" rows="3" placeholder="3 Lightning Bolt&#10;1 Llanowar Elves"></textarea>
+              </label>
+              <button id="btn-inv-add" class="primary">Add to inventory</button>
+              <span id="inv-msg" class="muted"></span>
+            </div>
           </section>
           <section class="card">
             <h2>Your Orders</h2>
@@ -57,8 +69,10 @@
             <h2>To-do</h2>
             <ul id="todo-list" class="todo-list"></ul>
 
-            <h3>Deliveries <span class="muted">— hand off / pick up cards within 2 days of a trade</span></h3>
-            <div id="todo-deliveries"></div>
+            <div id="deliveries-block">
+              <h3>Deliveries <span class="muted">— hand off / pick up cards within 2 days of a trade</span></h3>
+              <div id="todo-deliveries"></div>
+            </div>
           </section>
           <section class="card">
             <h2>Schedule</h2>
@@ -80,6 +94,7 @@
               <h3>Holdings</h3>
               <table id="my-holdings"><tbody></tbody></table>
 
+              <div id="order-forms">
               <h3>Place a Bid <span class="muted">(buy any card)</span></h3>
               <div class="order-row buy">
                 <form id="bid-form" class="orderform">
@@ -111,6 +126,7 @@
               <div class="orders">
                 <div><h4>Bids</h4><table id="my-bids"><tbody></tbody></table></div>
                 <div><h4>Offers</h4><table id="my-offers"><tbody></tbody></table></div>
+              </div>
               </div>
             </div>
           </section>
@@ -228,6 +244,18 @@
         </section>
       </div>
 
+      <!-- ===== AUCTION TAB (league mode) ===== -->
+      <div id="tab-auction" class="tabpane hidden">
+        <section class="card">
+          <h2>Weekly Auction <span id="lg-status" class="muted"></span></h2>
+          <p class="muted">Sealed bids: for each card, the top bids win one copy each (as many as are available) and pay what they bid. Ties are broken randomly. You can place several bids on the same card at different prices — each competes for one copy. Bids can't exceed your balance.</p>
+          <div id="lg-summary" class="funds muted"></div>
+          <div id="lg-error" class="error"></div>
+          <div id="lg-mybids"></div>
+          <div id="lg-pool" class="gallery"></div>
+        </section>
+      </div>
+
       <!-- ===== LADDER TAB ===== -->
       <div id="tab-ladder" class="tabpane hidden">
         <div class="columns">
@@ -235,15 +263,20 @@
             <h2>Your Ladder</h2>
             <div class="gpw-row">
               <label>Games per week
-                <input id="l-gpw" type="number" min="0" value="0" />
+                <input id="l-gpw" type="number" min="0" value="1" />
               </label>
               <span id="l-gpw-max" class="muted"></span>
               <button id="l-gpw-save" class="ghost">save</button>
             </div>
 
-            <h3>Your Availability <span class="muted">— click the times you're free (shown in your local time)</span></h3>
+            <h3>Weekly Availability <span class="muted">— set once; applies every week</span></h3>
+            <div id="l-recurring" class="calwrap"></div>
+            <button id="l-recurring-save" class="primary">Save weekly pattern</button>
+            <span id="l-recurring-msg" class="muted"></span>
+
+            <h3>One-off Availability <span class="muted">— extra times for specific dates (your local time). ◇ = already covered by your weekly pattern.</span></h3>
             <div id="l-calendar" class="calwrap"></div>
-            <button id="l-avail-save" class="primary">Save availability</button>
+            <button id="l-avail-save" class="primary">Save one-off availability</button>
             <span id="l-prefs-msg" class="muted"></span>
 
             <h3>Your Matches</h3>
@@ -320,6 +353,7 @@
   <script src="/app-core.js"></script>
   <script src="/app-home.js"></script>
   <script src="/app-market.js"></script>
+  <script src="/app-league.js"></script>
   <script src="/app-ladder.js"></script>
   <script src="/app.js"></script>
 </body>

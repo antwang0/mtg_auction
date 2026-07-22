@@ -18,6 +18,10 @@ const MAX_AVAIL_SLOTS: usize = 2000;
 /// no-show and expired (so players have time to report late).
 const NO_SHOW_GRACE_SECS: u64 = 24 * 3600;
 
+/// Weekly match target for a player who hasn't set one — so games schedule by
+/// default and a player opts out by setting it to 0.
+pub const DEFAULT_GAMES_PER_WEEK: u32 = 1;
+
 /// The Unix epoch second a slot begins, given the game's configured block start
 /// hours (see [`Config::ladder_block_hours`]). Falls back to [`DAY_BLOCKS`] for
 /// any block index the hours slice doesn't cover.
@@ -26,6 +30,18 @@ pub fn slot_start_epoch(slot: i64, hours: &[u32]) -> u64 {
     let block = slot.rem_euclid(N_BLOCKS) as usize;
     let hour = hours.get(block).copied().unwrap_or(DAY_BLOCKS[block]);
     day as u64 * 86_400 + hour as u64 * 3_600
+}
+
+/// The number of distinct recurring "weekly slots": one per (weekday, block).
+const N_WEEKLY_SLOTS: u32 = 7 * DAY_BLOCKS.len() as u32;
+
+/// The recurring "weekly slot" a concrete slot maps to:
+/// `weekday * blocks + block`, with weekday 0 = Sunday. A recurring pattern is a
+/// set of these, matched against every future slot.
+pub fn weekly_slot(slot: i64) -> u32 {
+    let weekday = (slot.div_euclid(N_BLOCKS) + 4).rem_euclid(7); // epoch day 0 = Thursday
+    let block = slot.rem_euclid(N_BLOCKS);
+    (weekday * N_BLOCKS + block) as u32
 }
 
 /// The calendar week a slot falls in, with weeks running Monday→Sunday (UTC).
@@ -59,6 +75,27 @@ impl Game {
         Ok(())
     }
 
+    /// Replace a player's recurring weekly availability with the given weekly-slot
+    /// indices (`weekday * blocks + block`), kept sorted and de-duplicated. These
+    /// apply to every future week, on top of any explicit availability slots.
+    pub fn set_recurring(&mut self, player: PlayerId, mut slots: Vec<u32>) -> Result<(), String> {
+        if !self.players.contains_key(&player) {
+            return Err("no such player".into());
+        }
+        slots.retain(|&s| s < N_WEEKLY_SLOTS);
+        slots.sort_unstable();
+        slots.dedup();
+        self.ladder.recurring.insert(player, slots);
+        Ok(())
+    }
+
+    /// Whether a player is available for a slot: an explicit availability slot,
+    /// or one matching their recurring weekly pattern.
+    fn is_available(&self, player: PlayerId, slot: i64) -> bool {
+        self.ladder.availability.get(&player).is_some_and(|s| s.binary_search(&slot).is_ok())
+            || self.ladder.recurring.get(&player).is_some_and(|w| w.binary_search(&weekly_slot(slot)).is_ok())
+    }
+
     /// Set how many matches a player wants scheduled per week (0..=max).
     pub fn set_games_per_week(&mut self, player: PlayerId, n: u32) -> Result<(), String> {
         if !self.players.contains_key(&player) {
@@ -72,8 +109,10 @@ impl Game {
         Ok(())
     }
 
-    fn quota(&self, player: PlayerId) -> u32 {
-        self.ladder.games_per_week.get(&player).copied().unwrap_or(0)
+    /// A player's weekly match target. Players who haven't chosen one default to
+    /// [`DEFAULT_GAMES_PER_WEEK`]; setting it to 0 opts out.
+    pub fn quota(&self, player: PlayerId) -> u32 {
+        self.ladder.games_per_week.get(&player).copied().unwrap_or(DEFAULT_GAMES_PER_WEEK)
     }
 
     // ---- automatic matchmaking ---------------------------------------------
@@ -121,10 +160,20 @@ impl Game {
         }
 
         let block_hours = self.config.ladder_block_hours.clone();
+        // League matchmaking opens on a configured day; never schedule a match
+        // before it (0 = no gate, e.g. the standard game).
+        let mm_start_epoch: u64 = if self.is_league() && self.config.league_matchmaking_start_day > 0 {
+            (self.config.league_matchmaking_start_day * 86_400
+                - self.config.league_tz_offset_mins as i64 * 60)
+                .max(0) as u64
+        } else {
+            0
+        };
         let mut created = 0usize;
         for slot in first_slot..last_slot {
-            if slot_start_epoch(slot, &block_hours) <= now_epoch {
-                continue; // only schedule strictly-future slots
+            let slot_epoch = slot_start_epoch(slot, &block_hours);
+            if slot_epoch <= now_epoch || slot_epoch < mm_start_epoch {
+                continue; // only schedule strictly-future slots, from the open date on
             }
             let w = week_of(slot);
             let has_quota = |p: PlayerId, used: &HashMap<(i64, PlayerId), u32>| {
@@ -136,9 +185,7 @@ impl Game {
                 .iter()
                 .copied()
                 .filter(|&p| {
-                    has_quota(p, &used)
-                        && !booked.contains(&(p, slot))
-                        && self.ladder.availability.get(&p).is_some_and(|s| s.binary_search(&slot).is_ok())
+                    has_quota(p, &used) && !booked.contains(&(p, slot)) && self.is_available(p, slot)
                 })
                 .collect();
             if avail.len() < 2 {
@@ -266,22 +313,53 @@ impl Game {
         Ok(())
     }
 
-    /// Host override: record a final result directly, skipping confirmation.
-    pub fn force_match_result(&mut self, id: u64, a_wins: u32, b_wins: u32, draws: u32) -> Result<(), String> {
+    /// A participant records the result for their own match, finalising it
+    /// immediately (no opponent confirmation) and applying the ELO change.
+    pub fn submit_match_result(&mut self, reporter: PlayerId, id: u64, a_wins: u32, b_wins: u32, draws: u32) -> Result<(), String> {
         validate_games(a_wins, b_wins, draws)?;
         let (a, b) = {
             let m = self.match_mut(id)?;
             match m.status {
-                MatchStatus::Completed => return Err("that match is already final".into()),
+                MatchStatus::Completed => return Err("that match is already final — ask the host to correct it".into()),
                 MatchStatus::Cancelled => return Err("that match was cancelled".into()),
-                // Scheduled or Expired (a no-show the host is resolving) are fine.
-                MatchStatus::Scheduled | MatchStatus::Expired => {}
+                MatchStatus::Expired => return Err("that match expired — ask the host to record it".into()),
+                MatchStatus::Scheduled => {}
+            }
+            if !m.involves(reporter) {
+                return Err("you are not playing in that match".into());
             }
             m.a_wins = a_wins;
             m.b_wins = b_wins;
             m.draws = draws;
             (m.a, m.b)
         };
+        self.complete_match(id, a, b, a_wins, b_wins);
+        Ok(())
+    }
+
+    /// Host override: record a final result directly. Works on a scheduled match,
+    /// an expired no-show, or an already-completed match — the last case reverts
+    /// the prior ELO change first, so a mistaken single-player entry can be fixed.
+    pub fn force_match_result(&mut self, id: u64, a_wins: u32, b_wins: u32, draws: u32) -> Result<(), String> {
+        validate_games(a_wins, b_wins, draws)?;
+        let (a, b, undo_a, undo_b) = {
+            let m = self.match_mut(id)?;
+            if m.status == MatchStatus::Cancelled {
+                return Err("that match was cancelled".into());
+            }
+            // Revert a previously-applied result before re-applying the new one.
+            let (undo_a, undo_b) = if m.status == MatchStatus::Completed { (m.a_delta, m.b_delta) } else { (0, 0) };
+            m.a_wins = a_wins;
+            m.b_wins = b_wins;
+            m.draws = draws;
+            (m.a, m.b, undo_a, undo_b)
+        };
+        if undo_a != 0 {
+            self.players.get_mut(&a).expect("match references a known player").elo -= undo_a as i64;
+        }
+        if undo_b != 0 {
+            self.players.get_mut(&b).expect("match references a known player").elo -= undo_b as i64;
+        }
         self.complete_match(id, a, b, a_wins, b_wins);
         Ok(())
     }

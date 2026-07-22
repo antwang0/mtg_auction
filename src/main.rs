@@ -14,6 +14,9 @@ const APP_CORE_JS: &str = include_str!("../static/app-core.js");
 const APP_HOME_JS: &str = include_str!("../static/app-home.js");
 const APP_MARKET_JS: &str = include_str!("../static/app-market.js");
 const APP_LADDER_JS: &str = include_str!("../static/app-ladder.js");
+const APP_LEAGUE_JS: &str = include_str!("../static/app-league.js");
+const MATCHES_HTML: &str = include_str!("../static/matches.html");
+const MATCHES_JS: &str = include_str!("../static/matches.js");
 const APP_JS: &str = include_str!("../static/app.js");
 const STYLE_CSS: &str = include_str!("../static/style.css");
 const ADMIN_HTML: &str = include_str!("../static/admin.html");
@@ -52,6 +55,18 @@ async fn app_market_js() -> impl IntoResponse {
 
 async fn app_ladder_js() -> impl IntoResponse {
     js(APP_LADDER_JS)
+}
+
+async fn app_league_js() -> impl IntoResponse {
+    js(APP_LEAGUE_JS)
+}
+
+async fn matches_page() -> Html<&'static str> {
+    Html(MATCHES_HTML)
+}
+
+async fn matches_js() -> impl IntoResponse {
+    js(MATCHES_JS)
 }
 
 async fn app_js() -> impl IntoResponse {
@@ -109,6 +124,9 @@ async fn main() {
         .route("/app-home.js", get(app_home_js))
         .route("/app-market.js", get(app_market_js))
         .route("/app-ladder.js", get(app_ladder_js))
+        .route("/app-league.js", get(app_league_js))
+        .route("/matches", get(matches_page))
+        .route("/matches.js", get(matches_js))
         .route("/app.js", get(app_js))
         .route("/admin-core.js", get(admin_core_js))
         .route("/admin-setup.js", get(admin_setup_js))

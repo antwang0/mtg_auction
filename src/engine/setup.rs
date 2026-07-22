@@ -15,14 +15,53 @@ impl Game {
         if config.player_names.iter().any(|n| n.trim().is_empty()) {
             return Err("player names cannot be empty".into());
         }
-        if config.primary_rounds == 0 || config.secondary_rounds == 0 {
+        let league = config.mode == GameMode::League;
+        if !league && (config.primary_rounds == 0 || config.secondary_rounds == 0) {
             return Err("each phase needs at least 1 round".into());
         }
         // A manual pool deals its listed cards directly, so the pack settings
         // don't apply to it; for a set-drafted pool they must be sensible.
+        // League games start with no pool at all (packs are physical).
         let manual = pool.exact.is_some();
-        if !manual && (config.num_packs == 0 || config.pack_size == 0) {
+        if !league && !manual && (config.num_packs == 0 || config.pack_size == 0) {
             return Err("need at least 1 pack of at least 1 card".into());
+        }
+        if league {
+            // Offset range covers every real UTC offset (−12:00 … +14:00).
+            if !(-720..=840).contains(&config.league_tz_offset_mins) {
+                return Err("league timezone offset must be between -720 and +840 minutes".into());
+            }
+            if config.league_close_hour > 23 {
+                return Err("close hour must be between 0 and 23".into());
+            }
+            if !(1..=8).contains(&config.league_period_weeks) {
+                return Err("auction cadence must be between 1 and 8 weeks".into());
+            }
+            if config.league_first_auction_day < 0
+                || config.league_last_auction_day < 0
+                || config.league_matchmaking_start_day < 0
+            {
+                return Err("auction/matchmaking dates cannot be negative".into());
+            }
+            // A first auction date is required (the API derives the default
+            // before setup; a direct caller must supply one).
+            if config.league_first_auction_day == 0 {
+                return Err("set the first auction date".into());
+            }
+            if config.league_last_auction_day > 0
+                && config.league_last_auction_day < config.league_first_auction_day
+            {
+                return Err("the last auction date is before the first".into());
+            }
+            if config.league_matchmaking_start_day > config.league_first_auction_day {
+                return Err("matchmaking must open on or before the first auction".into());
+            }
+            if !(0..=MAX_PRICE).contains(&config.weekly_stipend) {
+                return Err("weekly stipend is out of range".into());
+            }
+            if config.league_packs_per_player > 1_000 {
+                return Err("too many packs per player (max 1000)".into());
+            }
         }
         if config.debt_limit < 0 {
             return Err("debt limit cannot be negative".into());
@@ -37,7 +76,7 @@ impl Game {
         if config.primary_rounds > 10_000 || config.secondary_rounds > 10_000 {
             return Err("too many rounds (max 10000 per phase)".into());
         }
-        if !manual && config.num_packs as u64 * config.pack_size as u64 > 100_000 {
+        if !league && !manual && config.num_packs as u64 * config.pack_size as u64 > 100_000 {
             return Err("too many cards opened — reduce packs or pack size".into());
         }
         if config.starting_money > MAX_PRICE || config.debt_limit > MAX_PRICE {
@@ -69,16 +108,17 @@ impl Game {
         if config.ladder_block_hours.iter().any(|&h| h > 23) {
             return Err("ladder block hours must be between 0 and 23 (UTC)".into());
         }
-        if pool.is_empty() {
+        if !league && pool.is_empty() {
             return Err("the chosen set has no cards".into());
         }
 
         let mut rng = Rng::new(config.seed);
 
-        // Build the pile of physical cards to deal. A manual pool is its exact
-        // multiset (each card repeated by its quantity); otherwise open packs
-        // from the rarity buckets.
-        let mut pile: Vec<&PoolCard> = match &pool.exact {
+        // Build the pile of physical cards to deal. A league game deals nothing
+        // (players open physical packs; the host stocks the auction pool later).
+        // A manual pool is its exact multiset (each card repeated by its
+        // quantity); otherwise open packs from the rarity buckets.
+        let mut pile: Vec<&PoolCard> = if league { Vec::new() } else { match &pool.exact {
             Some(list) => {
                 let total: u64 = list.iter().map(|(_, qty)| *qty as u64).sum();
                 if total == 0 {
@@ -102,7 +142,7 @@ impl Game {
                 }
                 pile
             }
-        };
+        } };
         rng.shuffle(&mut pile);
 
         // Intern cards (by name) into a catalog of distinct cards.
@@ -174,23 +214,28 @@ impl Game {
         }
         let admin_id = player_order[0];
 
+        let set_name = if league { "League".to_string() } else { pool.set_name };
         let mut game = Game {
             config,
-            set_name: pool.set_name,
+            set_name,
             cards,
             card_order,
             players,
             player_order,
             tokens,
             admin_id,
-            round: 1,
-            phase: Phase::Primary,
+            // League: `round` counts auctions (weeks) and starts at 0 — the
+            // first auction opens when the host stocks the pool.
+            round: if league { 0 } else { 1 },
+            phase: if league { Phase::League } else { Phase::Primary },
             house,
             ..Game::default()
         };
         // Primary issue: the bank lists all its leftover (unallocated) cards into
         // the auction so players can acquire them in the primary phase.
-        let _ = game.offer_house_cards(&mut rng);
+        if !league {
+            let _ = game.offer_house_cards(&mut rng);
+        }
         Ok(game)
     }
 
@@ -202,7 +247,7 @@ impl Game {
     /// `by_name` is a name→id index over the existing catalog, consulted and
     /// updated in place so a whole batch interns in O(n) rather than rescanning
     /// the catalog (and re-sorting `card_order`) per card.
-    fn intern_card(&mut self, pc: &PoolCard, by_name: &mut HashMap<String, CardId>) -> CardId {
+    pub(super) fn intern_card(&mut self, pc: &PoolCard, by_name: &mut HashMap<String, CardId>) -> CardId {
         if let Some(&id) = by_name.get(&pc.name) {
             return id;
         }

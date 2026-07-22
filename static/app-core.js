@@ -76,7 +76,31 @@ function render() {
 
   if (!inGame) $("status").textContent = "No game in progress.";
   else if (state.phase === "finished") $("status").textContent = `${state.set_name} — game over.`;
+  else if (isLeague(state)) $("status").textContent = state.league_ended
+    ? `${state.set_name} — league complete (auctions ended)`
+    : leagueOpen(state)
+    ? `${state.set_name} — week ${state.round} auction open, closes ${fmtLeagueTime(state.round_deadline, state.league_tz_offset_mins)}`
+    : `${state.set_name} — auction closed (waiting for the next pool)`;
   else $("status").textContent = `${state.set_name} — ${phaseLabel(state.phase)} · round ${state.round} of ${state.total_rounds} — debt limit ${fmtUSD(state.debt_limit)}`;
+
+  // League mode has a leaner set of tabs: it swaps Market for the Auction tab
+  // and hides Inventory + Calendar (the market/planning apparatus and the
+  // per-slot month grid aren't used). Order forms are dropped too (no selling).
+  const league = isLeague(state);
+  const tabBtn = (name) => document.querySelector(`.tab[data-tab="${name}"]`);
+  tabBtn("auction").classList.toggle("hidden", !league);
+  tabBtn("market").classList.toggle("hidden", league);
+  tabBtn("inventory").classList.toggle("hidden", league);
+  tabBtn("calendar").classList.toggle("hidden", league);
+  // If the active tab just got hidden, fall back to a visible one.
+  const activeBtn = tabBtn(activeTab);
+  if (activeBtn && activeBtn.classList.contains("hidden")) {
+    (league ? tabBtn("auction") : tabBtn("market")).click();
+  }
+  $("order-forms").classList.toggle("hidden", league);
+  $("manual-inv").classList.toggle("hidden", !league || state.me == null);
+  // League auction winnings are handed over in person — no delivery tracking.
+  $("deliveries-block").classList.toggle("hidden", league);
 
   // Per-round results toast when a new round closes. `rounds_closed` counts
   // every close; `history` itself only carries the most recent rounds.
@@ -127,6 +151,7 @@ function render() {
   renderPlan();
   renderGallery();
   renderMyOrders();
+  renderLeague();
   renderHome();
   renderTodo();
   renderMonthCalendar();
@@ -148,6 +173,9 @@ function renderAuth(inGame, loggedIn) {
   $("btn-setpw").classList.toggle("hidden", !loggedIn);
   $("btn-setpw").textContent = state && state.my_has_password ? "Change password" : "Set password";
   $("btn-logout").classList.toggle("hidden", !loggedIn);
+  // The Admin link is only for the host; hide it from everyone else once a game
+  // is running (before a game exists, anyone may set the first one up).
+  $("admin-link").classList.toggle("hidden", inGame && !state.am_admin);
 }
 
 function flash(el) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
@@ -245,7 +273,7 @@ function setToken(t) { authToken = t || ""; if (authToken) localStorage.setItem(
 // ---- timer countdown ----
 function tickTimer() {
   const el = $("round-timer");
-  if (!isTrading(state) || !timerDeadline) { el.textContent = ""; el.classList.remove("urgent"); return; }
+  if ((!isTrading(state) && !leagueOpen(state)) || !timerDeadline) { el.textContent = ""; el.classList.remove("urgent"); return; }
   const rem = timerDeadline - (Math.floor(Date.now() / 1000) + clockSkew);
   if (rem <= 0) { el.textContent = "⏱ closing…"; el.classList.add("urgent"); return; }
   const d = Math.floor(rem / 86400), h = Math.floor((rem % 86400) / 3600);

@@ -47,11 +47,16 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/log", get(get_log))
         .route("/api/ladder", get(get_ladder))
         .route("/api/ladder/availability", post(set_availability))
+        .route("/api/ladder/recurring", post(set_recurring))
         .route("/api/ladder/games", post(set_games_per_week))
         .route("/api/ladder/schedule", post(schedule_matches))
         .route("/api/ladder/report", post(report_result))
-        .route("/api/ladder/confirm", post(confirm_result))
         .route("/api/ladder/cancel", post(cancel_match))
+        .route("/api/league/bid", post(place_league_bid))
+        .route("/api/league/bid/cancel", post(cancel_league_bid))
+        .route("/api/league/open", post(open_league_auction))
+        .route("/api/inventory/add", post(inventory_add))
+        .route("/api/inventory/remove", post(inventory_remove))
 }
 
 /// An API error rendered as `{ "error": "..." }` with a status code.
@@ -168,8 +173,19 @@ fn player_trade_views(game: &Game, player: PlayerId) -> Vec<PlayerTradeView> {
 
 /// Full state for the client. Public info plus, for the player identified by
 /// the request token, that player's own (private) resting orders.
+/// The logged-in player's resting league bids.
+#[derive(Serialize)]
+pub struct LeagueBidView {
+    id: u64,
+    card: CardId,
+    name: String,
+    price: Cents,
+}
+
 #[derive(Serialize)]
 pub struct StateView {
+    /// Which game mode is running (league games behave very differently).
+    mode: GameMode,
     phase: Phase,
     round: u32,
     total_rounds: u32,
@@ -214,6 +230,21 @@ pub struct StateView {
     /// How many rounds have closed in total. `history` only carries the most
     /// recent [`HISTORY_ROUNDS`]; clients use this counter to detect new closes.
     rounds_closed: usize,
+    /// League mode: whether an auction is currently taking bids (its close
+    /// instant is `round_deadline`), the per-close stipend, the informational
+    /// packs-per-player count, and the logged-in player's resting bids.
+    league_open: bool,
+    weekly_stipend: Cents,
+    league_packs_per_player: u32,
+    my_league_bids: Vec<LeagueBidView>,
+    /// League timezone (minutes east of UTC) that auction/matchmaking days are
+    /// expressed in, so clients can render the schedule in the league's time.
+    league_tz_offset_mins: i32,
+    /// True once the last auction date has passed — no more auctions can open.
+    league_ended: bool,
+    /// The next scheduled auction close (epoch second), even while no auction is
+    /// open, so the UI can show when the next one lands. `None` once ended.
+    league_next_close: Option<u64>,
 }
 
 /// How many closed rounds `/api/state` includes. History grows every round and
@@ -335,6 +366,11 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Res
         if game.is_admin(&token) { game.deliveries.clone() } else { Vec::new() };
     let reports: Vec<Report> = if game.is_admin(&token) { game.reports.clone() } else { Vec::new() };
     let (my_committed, my_available) = match me {
+        Some(id) if game.phase == Phase::League => {
+            // League bids commit real cash only (no debt allowed).
+            let committed = game.league_committed(id);
+            (committed, (game.players[&id].balance - committed).max(0))
+        }
         Some(id) => {
             let committed = game.committed(id);
             // Fills only ever lower committed by at least as much as they lower
@@ -344,6 +380,24 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Res
             (committed, avail)
         }
         None => (0, 0),
+    };
+    let my_league_bids: Vec<LeagueBidView> = match me {
+        Some(id) => {
+            let mut v: Vec<LeagueBidView> = game
+                .league_bids
+                .iter()
+                .filter(|b| b.player == id)
+                .map(|b| LeagueBidView {
+                    id: b.id,
+                    card: b.card,
+                    name: game.cards[&b.card].name.clone(),
+                    price: b.price,
+                })
+                .collect();
+            v.sort_by(|a, b| a.name.cmp(&b.name).then(b.price.cmp(&a.price)));
+            v
+        }
+        None => Vec::new(),
     };
 
     // Unallocated house inventory (public — these cards exist in the game).
@@ -356,6 +410,7 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Res
     house.sort_by(|a, b| a.name.cmp(&b.name));
 
     let view = StateView {
+        mode: game.config.mode,
         phase: game.phase,
         round: game.round,
         total_rounds: game.phase_rounds(),
@@ -383,6 +438,17 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Res
         reports,
         save_ok: state.persistence_ok(),
         rounds_closed: game.history.len(),
+        league_open: game.league_open(),
+        weekly_stipend: game.config.weekly_stipend,
+        league_packs_per_player: game.config.league_packs_per_player,
+        my_league_bids,
+        league_tz_offset_mins: game.config.league_tz_offset_mins,
+        league_ended: game.league_ended(now_epoch()),
+        league_next_close: if game.config.mode == GameMode::League {
+            game.next_league_close_at(now_epoch())
+        } else {
+            None
+        },
     };
     (
         [(axum::http::header::ETAG, etag), (axum::http::header::CACHE_CONTROL, "no-cache, private".into())],
@@ -486,7 +552,18 @@ pub struct SetupResponse {
     players: Vec<PlayerToken>,
 }
 
-pub async fn setup(State(state): State<AppState>, headers: HeaderMap, Json(config): Json<Config>) -> Result<Json<SetupResponse>, ApiError> {
+pub async fn setup(State(state): State<AppState>, headers: HeaderMap, Json(mut config): Json<Config>) -> Result<Json<SetupResponse>, ApiError> {
+    // League games: fill any unset (0) schedule days from the current time and
+    // configured timezone — matchmaking this Sunday, first auction the next.
+    if config.mode == GameMode::League {
+        let (mm, first) = crate::engine::default_league_days(now_epoch(), config.league_tz_offset_mins);
+        if config.league_matchmaking_start_day == 0 {
+            config.league_matchmaking_start_day = mm;
+        }
+        if config.league_first_auction_day == 0 {
+            config.league_first_auction_day = first;
+        }
+    }
     // A fresh server has no game and anyone may start the first one. Once a
     // game exists, only its host may replace it. Check auth, then release the
     // lock so we don't hold it across the (slow) Scryfall fetch.
@@ -497,8 +574,12 @@ pub async fn setup(State(state): State<AppState>, headers: HeaderMap, Json(confi
         }
     }
 
-    // The pool sources are mutually exclusive — exactly one is used.
-    let pool = match config.pool_source {
+    // The pool sources are mutually exclusive — exactly one is used. League
+    // games start with no pool at all (the host stocks the auction weekly).
+    let pool = if config.mode == GameMode::League {
+        CardPool::default()
+    } else {
+        match config.pool_source {
         PoolSource::Sample => crate::model::CardPool::sample(),
         PoolSource::Scryfall => {
             let code = config.set.trim().to_lowercase();
@@ -508,6 +589,7 @@ pub async fn setup(State(state): State<AppState>, headers: HeaderMap, Json(confi
             scryfall::fetch_pool(&config.set).await?
         }
         PoolSource::Manual => scryfall::fetch_decklist_pool(&config.card_list).await?,
+        }
     };
     let mut game = Game::setup(config, pool)?;
     game.arm_timer(now_epoch());
@@ -631,7 +713,12 @@ pub async fn close_round(State(state): State<AppState>, headers: HeaderMap) -> R
         if !game.is_admin(&token_of(&headers)) {
             return Err(ApiError::unauthorized("only the host can close the auction"));
         }
-        let result = game.close_round()?;
+        let result = if game.phase == Phase::League {
+            let mut rng = crate::engine::Rng::new(now_epoch() ^ game.config.seed);
+            game.close_league_auction(&mut rng)?
+        } else {
+            game.close_round()?
+        };
         game.record_deliveries(&result, now_epoch());
         game.arm_timer(now_epoch());
         result
@@ -647,12 +734,13 @@ pub struct DeliveryRequest {
     delivery_id: u64,
 }
 
-/// The buyer marks one of their deliveries received (settling it).
+/// The buyer (or the host) marks a delivery received (settling it).
 pub async fn receive_delivery(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<DeliveryRequest>) -> Result<Json<serde_json::Value>, ApiError> {
     {
         let mut game = state.lock_game();
         let me = require_player(&game, &headers)?;
-        game.mark_delivery_received(me, req.delivery_id)?;
+        let is_admin = game.is_admin(&token_of(&headers));
+        game.mark_delivery_received(me, req.delivery_id, is_admin)?;
     }
     state.save_and_notify().await;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -789,7 +877,12 @@ pub async fn add_cards(State(state): State<AppState>, headers: HeaderMap, Json(r
         if !game.is_admin(&token_of(&headers)) {
             return Err(ApiError::unauthorized("only the host can add cards"));
         }
-        game.add_cards(pool)?
+        let added = game.add_cards(pool)?;
+        // League: stocking the pool opens the next auction automatically.
+        if game.phase == Phase::League && !game.league_open() {
+            let _ = game.open_league_auction(now_epoch());
+        }
+        added
     };
     state.save_and_notify().await;
     Ok(Json(serde_json::json!({ "added": added })))
@@ -852,18 +945,21 @@ pub struct LadderView {
     server_now: u64,
     me: Option<PlayerId>,
     my_availability: Vec<i64>,
+    /// The request player's recurring weekly availability (weekly-slot indices).
+    my_recurring: Vec<u32>,
     my_games_per_week: u32,
 }
 
 pub async fn get_ladder(State(state): State<AppState>, headers: HeaderMap) -> Json<LadderView> {
     let game = state.lock_game();
     let me = game.player_for_token(&token_of(&headers));
-    let (my_availability, my_games_per_week) = match me {
+    let (my_availability, my_recurring, my_games_per_week) = match me {
         Some(id) => (
             game.ladder.availability.get(&id).cloned().unwrap_or_default(),
-            game.ladder.games_per_week.get(&id).copied().unwrap_or(0),
+            game.ladder.recurring.get(&id).cloned().unwrap_or_default(),
+            game.quota(id),
         ),
-        None => (Vec::new(), 0),
+        None => (Vec::new(), Vec::new(), 0),
     };
     Json(LadderView {
         standings: game.standings(),
@@ -874,6 +970,7 @@ pub async fn get_ladder(State(state): State<AppState>, headers: HeaderMap) -> Js
         server_now: now_epoch(),
         me,
         my_availability,
+        my_recurring,
         my_games_per_week,
     })
 }
@@ -894,6 +991,22 @@ pub async fn set_availability(State(state): State<AppState>, headers: HeaderMap,
         let me = require_player(&game, &headers)?;
         game.set_availability(me, req.slots)?;
         game.auto_schedule(now_epoch()); // new availability may enable matches
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct RecurringRequest {
+    slots: Vec<u32>,
+}
+
+pub async fn set_recurring(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<RecurringRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        let me = require_player(&game, &headers)?;
+        game.set_recurring(me, req.slots)?;
+        game.auto_schedule(now_epoch()); // new recurring availability may enable matches
     }
     state.save_and_notify().await;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -938,8 +1051,9 @@ pub struct ReportRequest {
     draws: u32,
 }
 
-/// Enter a match result. A player reports their own match (pending until the
-/// opponent confirms); the host reports any match directly as a final override.
+/// Enter a match result. Either participant reports it and it's final
+/// immediately (no opponent confirmation). The host may report any match too,
+/// and can re-report a completed one to correct a mistake.
 pub async fn report_result(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<ReportRequest>) -> Result<Json<serde_json::Value>, ApiError> {
     {
         let mut game = state.lock_game();
@@ -948,7 +1062,7 @@ pub async fn report_result(State(state): State<AppState>, headers: HeaderMap, Js
         if game.is_admin(&token) {
             game.force_match_result(req.match_id, req.a_wins, req.b_wins, req.draws)?;
         } else {
-            game.propose_match_result(me, req.match_id, req.a_wins, req.b_wins, req.draws)?;
+            game.submit_match_result(me, req.match_id, req.a_wins, req.b_wins, req.draws)?;
         }
     }
     state.save_and_notify().await;
@@ -960,12 +1074,94 @@ pub struct MatchRequest {
     match_id: u64,
 }
 
-/// The opposing player confirms a pending result, making it final.
-pub async fn confirm_result(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<MatchRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+// ---- League mode --------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct LeagueBidRequest {
+    card: CardId,
+    price: Cents,
+}
+
+/// Place one single-copy bid in the open league auction.
+pub async fn place_league_bid(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<LeagueBidRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    let id = {
+        let mut game = state.lock_game();
+        let me = require_player(&game, &headers)?;
+        game.place_league_bid(me, req.card, req.price)?
+    };
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "bid_id": id })))
+}
+
+#[derive(Deserialize)]
+pub struct LeagueCancelRequest {
+    bid_id: u64,
+}
+
+/// Cancel one of your own resting league bids.
+pub async fn cancel_league_bid(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<LeagueCancelRequest>) -> Result<Json<serde_json::Value>, ApiError> {
     {
         let mut game = state.lock_game();
         let me = require_player(&game, &headers)?;
-        game.confirm_match_result(me, req.match_id)?;
+        game.cancel_league_bid(me, req.bid_id)?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Host: (re)open the league auction over the current pool. Stocking the pool
+/// via `/api/cards/add` opens it automatically; this covers the carried-over
+/// unsold pool when nothing new is added.
+pub async fn open_league_auction(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, ApiError> {
+    let closes = {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can open the auction"));
+        }
+        game.open_league_auction(now_epoch())?
+    };
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "closes": closes })))
+}
+
+#[derive(Deserialize)]
+pub struct InventoryAddRequest {
+    card_list: String,
+}
+
+/// League mode: a player adds cards (e.g. their opened packs) to their own
+/// inventory, for planning. Purely manual and optional.
+pub async fn inventory_add(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<InventoryAddRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    // Authorize before the (slow) metadata fetch, and again before mutating.
+    {
+        let game = state.lock_game();
+        require_player(&game, &headers)?;
+        if game.phase != Phase::League {
+            return Err("manual inventory edits are only for league games".to_string().into());
+        }
+    }
+    let pool = scryfall::fetch_decklist_pool(&req.card_list).await?;
+    let added = {
+        let mut game = state.lock_game();
+        let me = require_player(&game, &headers)?;
+        game.inventory_add(me, pool)?
+    };
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "added": added })))
+}
+
+#[derive(Deserialize)]
+pub struct InventoryRemoveRequest {
+    card: CardId,
+    qty: u32,
+}
+
+/// League mode: a player removes copies from their own inventory.
+pub async fn inventory_remove(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<InventoryRemoveRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        let me = require_player(&game, &headers)?;
+        game.inventory_remove(me, req.card, req.qty)?;
     }
     state.save_and_notify().await;
     Ok(Json(serde_json::json!({ "ok": true })))

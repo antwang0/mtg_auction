@@ -59,10 +59,10 @@ fn a_trade_creates_a_pending_delivery() {
 fn buyer_marks_received_and_only_the_buyer_may() {
     let mut g = traded_game();
     let id = only(&g).id;
-    assert!(g.mark_delivery_received(2, id).is_err(), "the seller can't confirm");
-    g.mark_delivery_received(1, id).unwrap();
+    assert!(g.mark_delivery_received(2, id, false).is_err(), "the seller can't confirm");
+    g.mark_delivery_received(1, id, false).unwrap();
     assert_eq!(g.deliveries[0].status, DeliveryStatus::Received);
-    assert!(g.mark_delivery_received(1, id).is_err(), "already settled");
+    assert!(g.mark_delivery_received(1, id, false).is_err(), "already settled");
 }
 
 #[test]

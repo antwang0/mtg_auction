@@ -235,6 +235,7 @@ function modalAfford(reveal = false) {
   const hold = owned ? ` · you hold ${owned}` : ` · you don't own this`;
   const af = $("m-afford");
   if (!loggedIn) af.textContent = "Log in to trade.";
+  else if (isLeague(state)) af.textContent = "League game — bid from the Auction tab.";
   else if (!live) af.textContent = "Auction is closed.";
   else if (over && !reveal) af.innerHTML = `Bid commits <b>${fmtUSD(commit)}</b>${hold}`;
   else af.innerHTML = `Bid commits <b>${fmtUSD(commit)}</b> · ${fmtUSD(left)} left${hold}`;

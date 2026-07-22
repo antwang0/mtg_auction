@@ -16,11 +16,11 @@ async function loadLadder() {
 
 // Host override controls (report finalises immediately, no confirmation).
 function overrideControls(m) {
-  return `<span class="report-row">
-    <input class="rep-aw" type="number" min="0" value="${m.a_wins || 2}" data-mid="${m.id}" title="${esc(m.a_name)} game wins" />
-    – <input class="rep-bw" type="number" min="0" value="${m.b_wins || 0}" data-mid="${m.id}" title="${esc(m.b_name)} game wins" />
-    <input class="rep-d" type="number" min="0" value="${m.draws || 0}" data-mid="${m.id}" title="draws" />
-    <button class="primary rep-go" data-mid="${m.id}">set result</button>
+  return `<span class="report-row winrow">
+    <span class="muted">Winner:</span>
+    <button class="primary rep-win" data-mid="${m.id}" data-aw="1" data-bw="0" data-dw="0" data-who="${esc(m.a_name)}">${esc(m.a_name)}</button>
+    <button class="primary rep-win" data-mid="${m.id}" data-aw="0" data-bw="1" data-dw="0" data-who="${esc(m.b_name)}">${esc(m.b_name)}</button>
+    <button class="ghost rep-win" data-mid="${m.id}" data-aw="0" data-bw="0" data-dw="1" data-who="draw">Draw</button>
   </span>`;
 }
 
@@ -55,15 +55,15 @@ function renderLadder(l) {
     tr.appendChild(td(fmtSlot(m.slot_start)));
     tr.appendChild(td(`${esc(m.a_name)} <span class="muted">vs</span> ${esc(m.b_name)}`));
     if (m.status === "completed") {
-      tr.appendChild(td(`<b>${m.a_wins}–${m.b_wins}</b>`));
+      // Show the winner, plus a way to correct a mistaken result.
+      tr.appendChild(td(`<div><b>${esc(matchResult(m))}</b></div><div class="muted">correct:</div>${overrideControls(m)}`));
     } else if (m.status === "cancelled") {
       const who = m.cancelled_by === m.a ? m.a_name : m.b_name;
       tr.appendChild(td(`<span class="muted">cancelled by ${esc(who)}</span>`));
     } else if (m.status === "expired") {
       tr.appendChild(td(`<div class="muted">expired (no-show) — record it if it was played:</div>${overrideControls(m)}`));
     } else {
-      const pending = m.proposed_by != null ? `<div class="muted">reported ${m.a_wins}–${m.b_wins}, awaiting confirmation</div>` : "";
-      tr.appendChild(td(pending + overrideControls(m)));
+      tr.appendChild(td(overrideControls(m)));
     }
     body.appendChild(tr);
   });
@@ -80,20 +80,29 @@ $("btn-schedule").onclick = async () => {
   } catch (e) { $("tourney-error").textContent = e.message; }
 };
 
-// Delegated: host sets a result directly (override).
+// Delegated: host sets a result directly (override) by clicking the winner.
 $("ladder-matches").addEventListener("click", async (e) => {
-  const go = e.target.closest(".rep-go");
+  const go = e.target.closest(".rep-win");
   if (!go) return;
-  const mid = Number(go.dataset.mid);
-  const val = (cls) => Math.max(0, Number(document.querySelector(`.${cls}[data-mid="${mid}"]`).value) || 0);
+  const prompt = go.dataset.who === "draw" ? "Set this match as a draw?" : `Set ${go.dataset.who} as the winner?`;
+  if (!confirm(prompt)) return;
   try {
-    await api("/api/ladder/report", "POST", { match_id: mid, a_wins: val("rep-aw"), b_wins: val("rep-bw"), draws: val("rep-d") });
+    await api("/api/ladder/report", "POST", { match_id: Number(go.dataset.mid), a_wins: Number(go.dataset.aw), b_wins: Number(go.dataset.bw), draws: Number(go.dataset.dw) });
     $("tourney-error").textContent = "";
     await refresh();
   } catch (err) { $("tourney-error").textContent = err.message; }
 });
 
 // ---- mid-game management ----
+// League: (re)open the weekly auction over the current (carried-over) pool.
+$("btn-league-open").onclick = async () => {
+  try {
+    const r = await api("/api/league/open", "POST", {});
+    toast(`Auction open — closes ${new Date(r.closes * 1000).toLocaleString()}.`);
+    await refresh();
+  } catch (e) { $("manage-error").textContent = e.message; }
+};
+
 $("btn-offer-house").onclick = async () => {
   try {
     const r = await api("/api/house/offer", "POST", {});
@@ -201,6 +210,8 @@ function renderDeliveries() {
   }
   [...ds].reverse().forEach((d) => {
     const tr = document.createElement("tr");
+    // The host can settle a pending hand-off on the players' behalf.
+    const receiveBtn = d.status === "pending" ? `<button class="buy d-received" data-id="${d.id}">Mark received</button> ` : "";
     const reverseBtn = d.status === "reversed" ? "" : `<button class="ghost d-reverse" data-id="${d.id}">Reverse</button>`;
     const note = d.note ? `<div class="muted">${esc(d.note)}</div>` : "";
     tr.innerHTML =
@@ -208,12 +219,20 @@ function renderDeliveries() {
       `<td>${esc(d.seller_name)}</td><td>${esc(d.buyer_name)}</td>` +
       `<td class="num">${fmtUSD(d.total)}</td>` +
       `<td class="dstat-${d.status}">${d.status}${note}</td>` +
-      `<td>${deliveryDeadline(d)}</td><td>${reverseBtn}</td>`;
+      `<td>${deliveryDeadline(d)}</td><td>${receiveBtn}${reverseBtn}</td>`;
     tb.appendChild(tr);
   });
 }
 
 $("deliveries-table").addEventListener("click", async (e) => {
+  const recv = e.target.closest(".d-received");
+  if (recv) {
+    try {
+      await api("/api/deliveries/receive", "POST", { delivery_id: Number(recv.dataset.id) });
+      await refresh();
+    } catch (err) { $("deliveries-error").textContent = err.message; }
+    return;
+  }
   const b = e.target.closest(".d-reverse");
   if (!b) return;
   if (!confirm("Reverse this delivery? Cards and money are returned (no penalty).")) return;

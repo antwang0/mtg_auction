@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Draft Auction House — Admin</title>
+  <title>MTG Tournament — Admin</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -31,13 +31,65 @@
       <summary id="setup-toggle">New Game</summary>
       <label class="players-label">Players <span class="muted">(first listed is the host)</span></label>
       <div id="players-list" class="players-list"></div>
-      <button id="btn-add-player-row" type="button" class="ghost add-player-btn">+ Add player</button>
+      <div class="player-actions">
+        <button id="btn-add-player-row" type="button" class="ghost add-player-btn">+ Add player</button>
+        <button id="btn-import-players" type="button" class="ghost add-player-btn" title="Load names from a CSV or text file — one name per line, or the first column of a CSV (a header row is skipped)">Import CSV…</button>
+        <input id="import-players-csv" type="file" accept=".csv,.txt,text/csv,text/plain" hidden />
+        <span id="import-players-msg" class="muted"></span>
+      </div>
+
+      <fieldset class="mode-source">
+        <legend>Game mode</legend>
+        <label class="radio"><input type="radio" name="mode" value="standard" checked /> Standard — open packs here, primary + secondary auction phases</label>
+        <label class="radio"><input type="radio" name="mode" value="league" /> League — physical packs, weekly bank auctions, stipends, no selling</label>
+      </fieldset>
+
+      <div class="mode-pane" data-mode="league" hidden>
+        <fieldset>
+          <legend>League <span class="muted">(weekly sealed-bid auction; you stock the pool each week)</span></legend>
+          <div class="grid-form">
+            <label>Booster packs per player <span class="muted">(physical, informational)</span>
+              <input id="cfg-lg-packs" type="number" value="6" min="0" max="1000" />
+            </label>
+            <label>Weekly stipend ($)
+              <input id="cfg-lg-stipend" type="number" step="0.01" min="0" value="25.00" />
+            </label>
+            <label>League timezone <span class="muted">(all dates below are in this zone)</span>
+              <select id="cfg-lg-tz">
+                <option value="60" selected>BST — UTC+1</option>
+                <option value="0">GMT / UTC</option>
+                <option value="120">CEST — UTC+2</option>
+                <option value="-240">US Eastern (EDT) — UTC−4</option>
+                <option value="-300">US Central (CDT) — UTC−5</option>
+                <option value="-420">US Pacific (PDT) — UTC−7</option>
+              </select>
+            </label>
+            <label>Auction closes at <span class="muted">(league time)</span>
+              <input id="cfg-lg-time" type="time" step="3600" value="20:00" />
+            </label>
+            <label>Every N weeks
+              <input id="cfg-lg-period" type="number" value="1" min="1" max="8" />
+            </label>
+            <label>First matchmaking date
+              <input id="cfg-lg-mm" type="date" />
+            </label>
+            <label>First auction date
+              <input id="cfg-lg-first" type="date" />
+            </label>
+            <label>Last auction date <span class="muted">(optional — blank = no end)</span>
+              <input id="cfg-lg-last" type="date" />
+            </label>
+          </div>
+          <p id="cfg-lg-hint" class="muted"></p>
+          <p class="muted">Matchmaking defaults to <strong>this Sunday</strong> and the first auction to <strong>the next Sunday</strong> (change either above). Ladder games are scheduled from the matchmaking date on; auctions close weekly on their series dates at the time above (in the league timezone), stopping after the last auction date. Each cycle you add a card pool from the Manage section — that opens the auction. Top bids per card win a copy each and pay what they bid; unsold cards carry over; everyone gets the stipend after each close. Players cannot sell.</p>
+        </fieldset>
+      </div>
 
       <div class="grid-form">
         <label>Starting money ($)
           <input id="cfg-money" type="number" step="0.01" min="0" value="100.00" />
         </label>
-        <label>Debt limit ($)
+        <label class="std-only">Debt limit ($)
           <input id="cfg-debt" type="number" step="0.01" min="0" value="0.00" />
         </label>
         <label>Seed <span class="muted">(reproducibility)</span>
@@ -48,7 +100,7 @@
         </label>
       </div>
 
-      <fieldset>
+      <fieldset class="std-only">
         <legend>Auction phases <span class="muted">(primary: bank issues its cards · secondary: players trade each other)</span></legend>
         <div class="grid-form">
           <label>Primary rounds <input id="cfg-primary-rounds" type="number" value="4" min="1" /></label>
@@ -77,7 +129,7 @@
         <p class="muted">A round timer of <strong>0</strong> means rounds close only when you click <em>Close</em>. After the primary phase the bank withdraws its remaining cards and players trade only with each other.</p>
       </fieldset>
 
-      <fieldset class="pool-source">
+      <fieldset class="pool-source std-only">
         <legend>Card pool source <span class="muted">(pick one)</span></legend>
         <label class="radio"><input type="radio" name="pool" value="sample" checked /> Built-in sample set (offline)</label>
         <label class="radio"><input type="radio" name="pool" value="scryfall" /> Scryfall set code</label>
@@ -131,7 +183,7 @@
         </div>
       </fieldset>
 
-      <fieldset>
+      <fieldset class="std-only">
         <legend>Initial deal per player <span class="muted">(by rarity; leftovers go to the house)</span></legend>
         <div class="grid-form">
           <label>Commons <input id="cfg-deal-c" type="number" value="0" min="0" /></label>
@@ -142,7 +194,7 @@
         <p class="muted">Leave all at 0 to deal every opened card round-robin (nothing held back).</p>
       </fieldset>
 
-      <fieldset>
+      <fieldset class="std-only">
         <legend>House offer pricing <span class="muted">(reference price + Gaussian noise)</span></legend>
         <div class="grid-form">
           <label>Std dev (% of ref) <input id="cfg-house-stdev" type="number" value="10" min="0" step="0.5" /></label>
@@ -201,12 +253,22 @@
       </div>
       <p class="muted">The decklist (<code>quantity name</code> per line) can be pasted straight back into the card-list field of a new game.</p>
 
-      <h3>House inventory <span class="muted">(unallocated cards)</span></h3>
+      <!-- League mode: the recurring auction over the house pool. -->
+      <div id="league-manage" class="hidden">
+        <h3>Weekly auction</h3>
+        <div id="league-info" class="muted"></div>
+        <div class="admin">
+          <button id="btn-league-open" class="primary">Open the auction over the current pool</button>
+        </div>
+        <p class="muted">Adding cards below opens the auction automatically; this button covers re-opening over carried-over unsold cards without adding anything new. The auction closes at the configured weekly time (top bids per card win, pay-as-bid), pays every player the stipend, and then waits for the next pool.</p>
+      </div>
+
+      <h3 id="house-heading">House inventory <span class="muted">(unallocated cards)</span></h3>
       <div id="house-info" class="muted"></div>
-      <div class="admin">
+      <div id="house-offer" class="admin">
         <button id="btn-offer-house" class="primary">Offer house cards into the auction</button>
       </div>
-      <p class="muted">Lists every house card with a reference price at that price plus Gaussian noise (per the pricing set at game start). Re-running re-rolls the prices.</p>
+      <p id="house-offer-note" class="muted">Lists every house card with a reference price at that price plus Gaussian noise (per the pricing set at game start). Re-running re-rolls the prices.</p>
       <table id="house-table" class="grid">
         <thead><tr><th>Card</th><th class="num">Qty held</th></tr></thead>
         <tbody></tbody>

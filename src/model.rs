@@ -403,6 +403,13 @@ pub struct Ladder {
     /// Player → the (sorted) slot ids they have marked themselves free for.
     #[serde(default)]
     pub availability: HashMap<PlayerId, Vec<i64>>,
+    /// Player → recurring weekly availability, as (sorted) "weekly slot" indices
+    /// `weekday * DAY_BLOCKS.len() + block` (weekday 0 = Sunday). A future slot
+    /// counts as available if it matches one of these *or* an explicit
+    /// [`availability`](Self::availability) slot — so a player can set a weekly
+    /// pattern once instead of re-picking concrete slots as the window advances.
+    #[serde(default)]
+    pub recurring: HashMap<PlayerId, Vec<u32>>,
     /// Player → how many matches they want auto-scheduled per week.
     #[serde(default)]
     pub games_per_week: HashMap<PlayerId, u32>,
@@ -491,8 +498,39 @@ pub enum Phase {
     /// Secondary market: the bank has withdrawn and players trade only with each
     /// other. Matchmaking on the ladder begins once this phase opens.
     Secondary,
+    /// League mode: an open-ended series of weekly bank auctions (see
+    /// [`GameMode::League`]). Players never sell; the ladder runs throughout.
+    League,
     /// All rounds of both phases have closed.
     Finished,
+}
+
+/// Which game the host is running. Picked at setup and fixed for the game.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GameMode {
+    /// The original economy: packs are opened and dealt, the bank issues its
+    /// leftovers in a primary phase, then players trade in a secondary phase.
+    #[default]
+    Standard,
+    /// Weekly league: players open physical booster packs themselves (tracked
+    /// manually, if at all), and the bank runs a recurring sealed-bid auction
+    /// over a host-stocked pool. Players only buy — the top bids per card win
+    /// (pay-as-bid), unsold cards carry over, and everyone receives a stipend
+    /// after each close. No fixed end; the ELO ladder runs from the start.
+    League,
+}
+
+/// One resting league-auction bid: one copy of one card at a price. A player
+/// may hold any number of these, including several on the same card at
+/// different prices (each competes for one copy).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LeagueBid {
+    pub id: u64,
+    pub player: PlayerId,
+    pub card: CardId,
+    /// What the player pays if this bid wins (pay-as-bid).
+    pub price: Cents,
 }
 
 /// Where a game's card pool comes from. The three sources are mutually
@@ -511,6 +549,9 @@ pub enum PoolSource {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    /// Which game mode this game runs (see [`GameMode`]).
+    #[serde(default)]
+    pub mode: GameMode,
     pub player_names: Vec<String>,
     /// Which of the mutually-exclusive pool sources this game uses.
     #[serde(default)]
@@ -589,6 +630,56 @@ pub struct Config {
     /// seller and paid to the bank.
     #[serde(default = "default_delivery_penalty_pct")]
     pub delivery_penalty_pct: f64,
+
+    // ---- League mode settings (used when `mode == League`) ----
+    /// How many physical booster packs each player opens at the start
+    /// (informational — the app never sees the pack contents).
+    #[serde(default = "default_league_packs")]
+    pub league_packs_per_player: u32,
+    /// Cents paid to every player immediately after each auction closes.
+    #[serde(default = "default_weekly_stipend")]
+    pub weekly_stipend: Cents,
+    /// Fixed offset (minutes east of UTC) the auction and matchmaking *days* are
+    /// interpreted in — e.g. `60` for BST (UTC+1), `0` for GMT/UTC. A fixed
+    /// offset, so it does not follow daylight-saving transitions on its own.
+    #[serde(default = "default_league_tz_offset")]
+    pub league_tz_offset_mins: i32,
+    /// Local hour (0–23, in the league timezone) the auction closes at.
+    #[serde(default = "default_league_close_hour")]
+    pub league_close_hour: u32,
+    /// Auction cadence in weeks (1 = weekly). Closes fall on
+    /// `first_auction_day`, then every `period_weeks` weeks after it.
+    #[serde(default = "default_league_period")]
+    pub league_period_weeks: u32,
+    /// Epoch day (days since 1970-01-01, counted in the league timezone) of the
+    /// first auction close. `0` means "derive at setup" — the Sunday after
+    /// matchmaking opens.
+    #[serde(default)]
+    pub league_first_auction_day: i64,
+    /// Epoch day of the last auction close, inclusive. `0` means no end date
+    /// (auctions can be opened indefinitely).
+    #[serde(default)]
+    pub league_last_auction_day: i64,
+    /// Epoch day matchmaking opens: the auto-scheduler places no ladder match
+    /// before it. `0` means "derive at setup" — this Sunday.
+    #[serde(default)]
+    pub league_matchmaking_start_day: i64,
+}
+
+fn default_league_packs() -> u32 {
+    6
+}
+fn default_weekly_stipend() -> Cents {
+    2_500 // $25.00
+}
+fn default_league_tz_offset() -> i32 {
+    60 // BST (UTC+1)
+}
+fn default_league_close_hour() -> u32 {
+    20
+}
+fn default_league_period() -> u32 {
+    1
 }
 
 fn default_block_hours() -> Vec<u32> {
@@ -629,6 +720,7 @@ fn default_window_days() -> u32 {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            mode: GameMode::Standard,
             player_names: vec!["Alice".into(), "Bob".into(), "Carol".into(), "Dave".into()],
             pool_source: PoolSource::Sample,
             set: default_set(),
@@ -655,6 +747,14 @@ impl Default for Config {
             schedule_window_days: default_window_days(),
             ladder_block_hours: default_block_hours(),
             delivery_penalty_pct: default_delivery_penalty_pct(),
+            league_packs_per_player: default_league_packs(),
+            weekly_stipend: default_weekly_stipend(),
+            league_tz_offset_mins: default_league_tz_offset(),
+            league_close_hour: default_league_close_hour(),
+            league_period_weeks: default_league_period(),
+            league_first_auction_day: 0,
+            league_last_auction_day: 0,
+            league_matchmaking_start_day: 0,
         }
     }
 }

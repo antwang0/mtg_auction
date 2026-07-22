@@ -272,22 +272,25 @@ async fn ladder_schedule_report_confirm_flow() {
     let id = m["id"].as_u64().unwrap();
     let a = m["a"].as_u64().unwrap();
 
-    // Bob (non-host, player 2) reports himself winning; it stays pending until
-    // Alice confirms (a host reporting would instead finalize as an override).
+    // Bob (a participant) reports himself winning; it's final immediately, with
+    // no opponent confirmation needed.
     let (aw, bw) = if a == 2 { (2, 0) } else { (0, 2) }; // Bob wins, in seat order
-    c.post(format!("{base}/api/ladder/report")).header("x-token", &bob).json(&json!({ "match_id": id, "a_wins": aw, "b_wins": bw })).send().await.unwrap();
-    let pending: Value = c.get(format!("{base}/api/ladder")).send().await.unwrap().json().await.unwrap();
-    assert_eq!(pending["matches"][0]["status"], "scheduled");
-    assert_eq!(pending["matches"][0]["proposed_by"], 2);
-
-    // Bob can't confirm his own proposal; Alice (the opponent) can.
-    assert_eq!(c.post(format!("{base}/api/ladder/confirm")).header("x-token", &bob).json(&json!({ "match_id": id })).send().await.unwrap().status(), 400);
-    let ok = c.post(format!("{base}/api/ladder/confirm")).header("x-token", &alice).json(&json!({ "match_id": id })).send().await.unwrap();
-    assert_eq!(ok.status(), 200);
+    let r = c.post(format!("{base}/api/ladder/report")).header("x-token", &bob).json(&json!({ "match_id": id, "a_wins": aw, "b_wins": bw })).send().await.unwrap();
+    assert_eq!(r.status(), 200);
     let done: Value = c.get(format!("{base}/api/ladder")).send().await.unwrap().json().await.unwrap();
     assert_eq!(done["matches"][0]["status"], "completed");
     assert_eq!(done["standings"][0]["player"], 2, "Bob, the winner, leads on ELO");
     assert_eq!(done["standings"][0]["elo"], 1216);
+
+    // The host can correct a mistaken result even after it's final (reverting
+    // the old ELO and applying the new one — a draw here evens it back out).
+    let fix = c.post(format!("{base}/api/ladder/report")).header("x-token", &alice).json(&json!({ "match_id": id, "a_wins": 1, "b_wins": 1 })).send().await.unwrap();
+    assert_eq!(fix.status(), 200);
+    let fixed: Value = c.get(format!("{base}/api/ladder")).send().await.unwrap().json().await.unwrap();
+    assert_eq!(fixed["matches"][0]["status"], "completed");
+    for s in fixed["standings"].as_array().unwrap() {
+        assert_eq!(s["elo"], 1200, "a corrected draw restores even ELO");
+    }
 }
 
 #[tokio::test]

@@ -4,7 +4,17 @@
 // standings, and the month grid. Shares state with app-core.js.
 let availSet = new Set();   // slot ids I've toggled on (edit buffer)
 let availDirty = false;     // unsaved availability edits pending
+let recurSet = new Set();   // recurring weekly-slot ids toggled on (edit buffer)
+let recurDirty = false;     // unsaved recurring-pattern edits pending
 let calYear = null, calMonth = null; // month shown in the Calendar tab grid
+
+// The recurring "weekly slot" a concrete slot maps to (must match the server's
+// `weekly_slot`): weekday·blocks + block, weekday 0 = Sunday.
+function weeklySlot(slot, nb) {
+  const weekday = ((Math.floor(slot / nb) + 4) % 7 + 7) % 7;
+  const block = ((slot % nb) + nb) % nb;
+  return weekday * nb + block;
+}
 
 // ---- ELO ladder ----
 // All times are rendered in the viewer's local timezone (slots are UTC instants
@@ -34,6 +44,8 @@ function renderLadder() {
 
   // Availability: re-sync from the server unless there are unsaved edits.
   if (!availDirty) availSet = new Set(ladder.my_availability || []);
+  if (!recurDirty) recurSet = new Set(ladder.my_recurring || []);
+  renderRecurringGrid();
   renderCalendar("l-calendar", { editable: true });
   renderMyMatches();
   renderAllMatches();
@@ -59,6 +71,40 @@ function blockName(block, nb) {
   if (nb === 2) return block === 0 ? "Morning" : "Evening";
   if (nb === 1) return "Anytime";
   return "";
+}
+
+// The recurring weekly-availability grid: 7 weekday rows × one column per block,
+// each cell a toggle bound to the recurring edit buffer. Set once, applies every
+// week. Block columns are labelled with their local clock time so it reads in the
+// viewer's timezone (weekdays follow the slot frame, which lines up for viewers
+// in/near the league timezone — the same grouping the calendar below uses).
+function renderRecurringGrid() {
+  const box = $("l-recurring");
+  if (!box) return;
+  if (!(state && state.me != null)) { box.innerHTML = `<p class="muted">Log in to set your weekly pattern.</p>`; return; }
+  if (!ladder) { box.innerHTML = `<p class="muted">Loading…</p>`; return; }
+  const blocks = ladder.blocks || [9, 21];
+  const nb = blocks.length;
+  const now = ladder.server_now || Math.floor(Date.now() / 1000);
+  const todayUtc = Math.floor(now / 86400);
+  const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const blockLabel = (b) => {
+    const nm = blockName(b, nb);
+    const t = localTimeLabel(todayUtc * 86400 + blocks[b] * 3600);
+    return nm ? `${nm} <span class="cal-time">${t}</span>` : t;
+  };
+  let html = `<table class="cal recur-grid"><thead><tr><th></th>`;
+  for (let b = 0; b < nb; b++) html += `<th>${blockLabel(b)}</th>`;
+  html += `</tr></thead><tbody>`;
+  for (let wd = 0; wd < 7; wd++) {
+    html += `<tr><td class="cal-day">${dow[wd]}</td>`;
+    for (let b = 0; b < nb; b++) {
+      const w = wd * nb + b;
+      html += `<td><button class="cal-chip recur-cell${recurSet.has(w) ? " on" : ""}" data-wslot="${w}">${recurSet.has(w) ? "✓" : ""}</button></td>`;
+    }
+    html += `</tr>`;
+  }
+  box.innerHTML = html + `</tbody></table>`;
 }
 
 // Local-midnight epoch of the Sunday starting the week that contains `epoch`.
@@ -87,6 +133,7 @@ function renderCalendar(targetId = "l-calendar", { editable = true, fromWeekStar
   const now = ladder.server_now || Math.floor(Date.now() / 1000);
   const todayUtc = Math.floor(now / 86400);
   const avail = editable ? availSet : new Set(ladder.my_availability || []);
+  const recur = editable ? recurSet : new Set(ladder.my_recurring || []);
 
   // Your scheduled games, keyed by slot id, so they can be marked on the grid.
   const me = state.me;
@@ -121,14 +168,16 @@ function renderCalendar(targetId = "l-calendar", { editable = true, fromWeekStar
     day.items.sort((a, b) => a.start - b.start).forEach((s) => {
       const past = s.start <= now;
       const on = avail.has(s.slot);
+      const covered = recur.has(weeklySlot(s.slot, nb));
       const game = games.get(s.slot);
       const name = blockName(s.block, nb);
+      const cov = covered ? ` <span class="recur-mark" title="covered by your weekly pattern">◇</span>` : "";
       const label = name ? `<b>${name}</b> <span class="cal-time">${localTimeLabel(s.start)}</span>` : localTimeLabel(s.start);
       if (editable) {
-        html += `<button class="cal-chip${on ? " on" : ""}" ${past ? "disabled" : `data-slot="${s.slot}"`}>${label}</button>`;
+        html += `<button class="cal-chip${on ? " on" : ""}${covered ? " covered" : ""}" ${past ? "disabled" : `data-slot="${s.slot}"`}>${label}${cov}</button>`;
       } else {
         const mark = game ? ` <span class="cal-game" title="game vs ${esc(game)}">🎲</span>` : "";
-        html += `<span class="cal-chip${on ? " on" : ""}${game ? " game" : ""}${past ? " past" : ""}">${label}${mark}</span>`;
+        html += `<span class="cal-chip${on || covered ? " on" : ""}${game ? " game" : ""}${past ? " past" : ""}">${label}${cov}${mark}</span>`;
       }
     });
     html += `</td></tr>`;
@@ -159,6 +208,7 @@ function renderMonthCalendar() {
     if (!availByDay.has(key)) availByDay.set(key, []);
     availByDay.get(key).push(block);
   });
+  const recurSaved = new Set(ladder.my_recurring || []);
   const gamesByDay = new Map();
   (ladder.matches || []).forEach((m) => {
     if ((m.a === me || m.b === me) && m.status === "scheduled") {
@@ -192,7 +242,10 @@ function renderMonthCalendar() {
       if (idx < startWeekday || dayNum > daysInMonth) { html += `<td class="cal-empty"></td>`; continue; }
       const cell = new Date(calYear, calMonth, dayNum);
       const key = `${cell.getFullYear()}-${cell.getMonth()}-${cell.getDate()}`;
-      const avail = (availByDay.get(key) || []).slice().sort((a, b) => a - b);
+      // Effective availability = explicit slots ∪ recurring pattern for this weekday.
+      const freeBlocks = new Set(availByDay.get(key) || []);
+      for (let b = 0; b < nb; b++) if (recurSaved.has(cell.getDay() * nb + b)) freeBlocks.add(b);
+      const avail = [...freeBlocks].sort((a, b) => a - b);
       const gms = (gamesByDay.get(key) || []).slice().sort((a, b) => a.start - b.start);
       const isToday = key === todayKey;
       let marks = avail.map((b) => {
@@ -237,8 +290,8 @@ function matchCard(m, me) {
 
   if (m.status === "completed") {
     const delta = iAmA ? m.a_delta : m.b_delta;
-    const verdict = myW > oppW ? "won" : myW < oppW ? "lost" : "drew";
-    return `<div class="matchcard">${head}<span class="muted">final ${myW}–${oppW} · ${verdict} · ELO ${delta >= 0 ? "+" : ""}${delta}</span></div>`;
+    const verdict = myW > oppW ? "you won" : myW < oppW ? `${esc(opp)} won` : "draw";
+    return `<div class="matchcard">${head}<span class="muted">${verdict} · ELO ${delta >= 0 ? "+" : ""}${delta}</span></div>`;
   }
   if (m.status === "cancelled") {
     const byMe = m.cancelled_by === me;
@@ -249,22 +302,16 @@ function matchCard(m, me) {
     return `<div class="matchcard">${head}<span class="muted">expired — no result was reported in time</span></div>`;
   }
 
-  // Scheduled: result entry (pre-filled from any proposal) + confirm + cancel.
-  const pw = m.proposed_by != null ? myW : 2, ow = m.proposed_by != null ? oppW : 0, dw = m.proposed_by != null ? m.draws : 0;
+  // Scheduled: click who won — it's final immediately (either player can enter it).
+  const me_aw = iAmA ? 1 : 0, me_bw = iAmA ? 0 : 1; // "I won" in seat order
   const form =
-    `<span class="report-row">` +
-    `<input class="lm-yw" type="number" min="0" value="${pw}" data-mid="${m.id}" title="your game wins" /> – ` +
-    `<input class="lm-ow" type="number" min="0" value="${ow}" data-mid="${m.id}" title="${esc(opp)} game wins" />` +
-    `<input class="lm-dw" type="number" min="0" value="${dw}" data-mid="${m.id}" title="draws" />` +
-    `<button class="buy lm-report" data-mid="${m.id}" data-a="${iAmA ? 1 : 0}">Report</button></span>`;
-  let note = `<div class="muted">Report your result:</div>`, confirmBtn = "";
-  if (m.proposed_by === me) {
-    note = `<div class="muted">You reported ${myW}–${oppW}; waiting for ${esc(opp)} to confirm.</div>`;
-  } else if (m.proposed_by != null) {
-    note = `<div class="muted">${esc(opp)} reported ${myW}–${oppW}. Confirm or counter:</div>`;
-    confirmBtn = `<button class="buy lm-confirm" data-mid="${m.id}">Confirm ${myW}–${oppW}</button> `;
-  }
-  return `<div class="matchcard">${head}${note}<div class="actrow">${confirmBtn}<button class="sell lm-cancel" data-mid="${m.id}">Cancel</button></div>${form}</div>`;
+    `<div class="report-row winrow">` +
+    `<button class="buy lm-win" data-mid="${m.id}" data-aw="${me_aw}" data-bw="${me_bw}" data-dw="0" data-who="You">You won</button>` +
+    `<button class="buy lm-win" data-mid="${m.id}" data-aw="${me_bw}" data-bw="${me_aw}" data-dw="0" data-who="${esc(opp)}">${esc(opp)} won</button>` +
+    `<button class="ghost lm-win" data-mid="${m.id}" data-aw="0" data-bw="0" data-dw="1" data-who="draw">Draw</button>` +
+    `</div>`;
+  const note = `<div class="muted">Click who won — it's final once you report (either player can enter it).</div>`;
+  return `<div class="matchcard">${head}${note}${form}<div class="actrow"><button class="sell lm-cancel" data-mid="${m.id}">Cancel</button></div></div>`;
 }
 
 // All matches (read-only overview).
@@ -276,10 +323,10 @@ function renderAllMatches() {
     `<table class="grid"><thead><tr><th>When</th><th>Match</th><th class="num">Result</th></tr></thead><tbody>` +
     ms.map((m) => {
       const mine = state && (m.a === state.me || m.b === state.me) ? ' class="mine"' : "";
-      const res = m.status === "completed" ? `${m.a_wins}–${m.b_wins}`
+      const res = m.status === "completed" ? esc(matchResult(m))
         : m.status === "cancelled" ? `<span class="muted">cancelled</span>`
           : m.status === "expired" ? `<span class="muted">expired</span>`
-            : m.proposed_by != null ? `<span class="muted">reported</span>` : `<span class="muted">scheduled</span>`;
+            : `<span class="muted">scheduled</span>`;
       return `<tr${mine}><td>${fmtSlot(m.slot_start)}</td><td>${esc(m.a_name)} <span class="muted">vs</span> ${esc(m.b_name)}</td><td class="num">${res}</td></tr>`;
     }).join("") + `</tbody></table>`;
 }
@@ -293,6 +340,26 @@ $("l-calendar").addEventListener("click", (e) => {
   availDirty = true;
   chip.classList.toggle("on");
 });
+
+$("l-recurring").addEventListener("click", (e) => {
+  const cell = e.target.closest(".recur-cell");
+  if (!cell) return;
+  const w = Number(cell.dataset.wslot);
+  if (recurSet.has(w)) recurSet.delete(w); else recurSet.add(w);
+  recurDirty = true;
+  cell.classList.toggle("on");
+  cell.textContent = recurSet.has(w) ? "✓" : "";
+  renderCalendar("l-calendar", { editable: true }); // reflect new coverage marks
+});
+
+$("l-recurring-save").onclick = async () => {
+  try {
+    await api("/api/ladder/recurring", "POST", { slots: [...recurSet] });
+    recurDirty = false;
+    $("l-recurring-msg").textContent = "Weekly pattern saved.";
+    await refresh();
+  } catch (e) { toastError(e.message); }
+};
 
 // Calendar tab: month navigation.
 $("cal-month").addEventListener("click", (e) => {
@@ -319,18 +386,14 @@ $("l-gpw-save").onclick = async () => {
 };
 
 $("l-mymatches").addEventListener("click", async (e) => {
-  const rep = e.target.closest(".lm-report");
-  if (rep) {
-    const mid = Number(rep.dataset.mid), iAmA = rep.dataset.a === "1";
-    const v = (cls) => Math.max(0, Number($("l-mymatches").querySelector(`.${cls}[data-mid="${mid}"]`).value) || 0);
-    const yw = v("lm-yw"), ow = v("lm-ow"), dw = v("lm-dw");
-    const body = { match_id: mid, a_wins: iAmA ? yw : ow, b_wins: iAmA ? ow : yw, draws: dw };
+  const win = e.target.closest(".lm-win");
+  if (win) {
+    const who = win.dataset.who;
+    // The result is final once reported (no opponent confirmation), so confirm.
+    const prompt = who === "draw" ? "Record this match as a draw?" : `Record ${who === "You" ? "yourself" : who} as the winner?`;
+    if (!confirm(`${prompt} This is final — the host can correct a mistake.`)) return;
+    const body = { match_id: Number(win.dataset.mid), a_wins: Number(win.dataset.aw), b_wins: Number(win.dataset.bw), draws: Number(win.dataset.dw) };
     try { await api("/api/ladder/report", "POST", body); await refresh(); } catch (err) { toastError(err.message); }
-    return;
-  }
-  const cf = e.target.closest(".lm-confirm");
-  if (cf) {
-    try { await api("/api/ladder/confirm", "POST", { match_id: Number(cf.dataset.mid) }); await refresh(); } catch (err) { toastError(err.message); }
     return;
   }
   const cx = e.target.closest(".lm-cancel");

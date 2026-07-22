@@ -76,6 +76,10 @@ function render() {
     $("status").textContent = "No game in progress.";
   } else if (state.phase === "finished") {
     $("status").textContent = `${state.set_name} — finished.`;
+  } else if (isLeague(state)) {
+    $("status").textContent = leagueOpen(state)
+      ? `${state.set_name} — week ${state.round} auction open`
+      : `${state.set_name} — auction closed (stock the pool to open the next one)`;
   } else {
     $("status").textContent = `${state.set_name} — ${phaseLabel(state.phase)} · round ${state.round} of ${state.total_rounds}`;
   }
@@ -98,7 +102,7 @@ function render() {
   $("ledger-card").classList.toggle("hidden", !state.am_admin);
   $("trades-card").classList.toggle("hidden", !state.am_admin);
   $("ladder-card").classList.toggle("hidden", !state.am_admin || !inGame);
-  $("deliveries-card").classList.toggle("hidden", !state.am_admin || !inGame);
+  $("deliveries-card").classList.toggle("hidden", !state.am_admin || !inGame || isLeague(state));
   $("reports-card").classList.toggle("hidden", !state.am_admin);
   if (state.am_admin) renderReports();
   if (state.am_admin && inGame) {
@@ -107,14 +111,35 @@ function render() {
     const cards = state.cards || [];
     const total = cards.reduce((s, c) => s + (c.supply || 0), 0);
     $("export-info").textContent = `${cards.length} distinct · ${total} copies`;
+
+    // League vs standard management controls.
+    const league = isLeague(state);
+    $("league-manage").classList.toggle("hidden", !league);
+    ["house-offer", "house-offer-note"].forEach((id) => $(id).classList.toggle("hidden", league));
+    $("house-heading").innerHTML = league
+      ? `Auction pool <span class="muted">(unsold cards carry over)</span>`
+      : `House inventory <span class="muted">(unallocated cards)</span>`;
+    if (league) {
+      const tz = state.league_tz_offset_mins;
+      $("btn-league-open").disabled = leagueOpen(state) || state.league_ended;
+      $("league-info").textContent = state.league_ended
+        ? `The league's last auction has closed — no more auctions can be opened. ${state.round} auction${state.round === 1 ? "" : "s"} ran.`
+        : leagueOpen(state)
+        ? `Week ${state.round} auction is open — closes ${fmtLeagueTime(state.round_deadline, tz)}. Stipend ${fmtUSD(state.weekly_stipend)} per player after the close.`
+        : `No auction open${state.round ? ` · ${state.round} closed so far` : ""}. Next close ${fmtLeagueTime(state.league_next_close, tz)} once you stock the pool.`;
+    }
   }
   if (state.am_admin && inGame) {
     const timer = state.round_seconds ? ` · auto-close timer ${state.round_seconds}s` : "";
     $("round-info").textContent =
       state.phase === "finished"
         ? "The game is over."
+        : isLeague(state)
+        ? (leagueOpen(state)
+            ? `Week ${state.round} auction is open — it closes automatically at the weekly time, or close it early here.`
+            : "No auction open — stock the pool (Manage below) to start the next one.")
         : `${phaseLabel(state.phase)} · round ${state.round} of ${state.total_rounds} is open for orders${timer}.`;
-    $("btn-close").disabled = !isTrading(state);
+    $("btn-close").disabled = !isTrading(state) && !leagueOpen(state);
   }
 
   timerDeadline = state.round_deadline ?? null;
@@ -124,11 +149,12 @@ function render() {
 
 function tickTimer() {
   const el = $("round-timer");
-  if (!isTrading(state) || !timerDeadline) { el.textContent = ""; return; }
+  if ((!isTrading(state) && !leagueOpen(state)) || !timerDeadline) { el.textContent = ""; return; }
   const rem = timerDeadline - (Math.floor(Date.now() / 1000) + clockSkew);
   if (rem <= 0) { el.textContent = "⏱ closing…"; el.classList.add("urgent"); return; }
-  const m = Math.floor(rem / 60), s = rem % 60;
-  el.textContent = `⏱ ${m}:${String(s).padStart(2, "0")}`;
+  const d = Math.floor(rem / 86400), h = Math.floor((rem % 86400) / 3600);
+  const m = Math.floor((rem % 3600) / 60), s = rem % 60;
+  el.textContent = d > 0 ? `⏱ ${d}d ${h}h ${m}m` : h > 0 ? `⏱ ${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `⏱ ${m}:${String(s).padStart(2, "0")}`;
   el.classList.toggle("urgent", rem <= 10);
 }
 

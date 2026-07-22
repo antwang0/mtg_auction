@@ -13,7 +13,13 @@ impl Game {
     /// Turn a closed round's trades into delivery obligations. Fills of the same
     /// (seller, buyer, card) within the round are merged into one delivery due
     /// [`DELIVERY_DEADLINE_SECS`] after `now_epoch`.
+    ///
+    /// League mode doesn't track deliveries — the host hands auction winnings over
+    /// in person — so this is a no-op there.
     pub fn record_deliveries(&mut self, result: &RoundResult, now_epoch: u64) {
+        if self.is_league() {
+            return;
+        }
         let mut agg: HashMap<(PlayerId, PlayerId, CardId), (u32, Cents)> = HashMap::new();
         let mut order: Vec<(PlayerId, PlayerId, CardId)> = Vec::new();
         for t in &result.trades {
@@ -47,11 +53,12 @@ impl Game {
         }
     }
 
-    /// The buyer confirms they received a pending delivery (settling it).
-    pub fn mark_delivery_received(&mut self, player: PlayerId, id: u64) -> Result<(), String> {
+    /// The buyer (or the host, on either party's behalf) confirms a pending
+    /// delivery was handed over (settling it).
+    pub fn mark_delivery_received(&mut self, player: PlayerId, id: u64, is_admin: bool) -> Result<(), String> {
         let d = self.deliveries.iter_mut().find(|d| d.id == id).ok_or("no such delivery")?;
-        if d.buyer != player {
-            return Err("only the buyer can mark a delivery received".into());
+        if d.buyer != player && !is_admin {
+            return Err("only the buyer or the host can mark a delivery received".into());
         }
         if d.status != DeliveryStatus::Pending {
             return Err("this delivery is no longer pending".into());

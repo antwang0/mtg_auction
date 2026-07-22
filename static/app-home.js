@@ -15,10 +15,13 @@ function renderHoldings(meView) {
   const tb = $("my-holdings").querySelector("tbody");
   tb.innerHTML = "";
   if (!meView || meView.holdings.length === 0) { tb.innerHTML = `<tr><td class="muted">no cards</td></tr>`; return; }
+  const league = isLeague(state);
   meView.holdings.forEach((h) => {
     const offered = myOfferByCard[h.card] ? ` <span class="muted">(${myOfferByCard[h.card].qty} offered)</span>` : "";
+    // League inventories are manually curated — allow removing copies.
+    const remove = league ? `<td><button class="linkbtn inv-remove" data-card="${h.card}" title="remove one copy">−1</button></td>` : "";
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${thumb(h.card)}${esc(h.name)}${offered}</td><td class="num">×${h.qty}</td>`;
+    tr.innerHTML = `<td>${thumb(h.card)}${esc(h.name)}${offered}</td><td class="num">×${h.qty}</td>${remove}`;
     tb.appendChild(tr);
   });
 }
@@ -41,6 +44,7 @@ function renderHomeCards() {
   if (!box) return;
   const me = myPlayerView();
   if (!me) { box.innerHTML = `<p class="muted">Log in to see your cards.</p>`; return; }
+  const league = isLeague(state);
   const holds = (me.holdings || []).slice().sort((a, b) => a.name.localeCompare(b.name));
   const copies = holds.reduce((s, h) => s + h.qty, 0);
   const value = holds.reduce((s, h) => s + ((cardById[h.card] || {}).ref_price || 0) * h.qty, 0);
@@ -52,12 +56,15 @@ function renderHomeCards() {
       stat("Ref value", fmtUSD(value)) +
     `</div>` +
     (holds.length
-      ? `<table class="grid mini"><thead><tr><th>Card</th><th class="num">Qty</th><th class="num">Ref $</th></tr></thead><tbody>` +
+      ? `<table class="grid mini"><thead><tr><th>Card</th><th class="num">Qty</th><th class="num">Ref $</th>${league ? "<th></th>" : ""}</tr></thead><tbody>` +
         holds.map((h) => {
           const c = cardById[h.card] || {};
           const off = myOfferByCard[h.card] ? ` <span class="muted">(${myOfferByCard[h.card].qty} offered)</span>` : "";
+          // League inventories are manually curated — allow removing copies here
+          // (the Inventory tab is hidden in league mode).
+          const remove = league ? `<td><button class="linkbtn home-inv-remove" data-card="${h.card}" title="remove one copy">−1</button></td>` : "";
           return `<tr data-card="${h.card}"><td>${esc(h.name)} <span class="pips">${colorPips(c.colors || "")}</span>${off}</td>` +
-            `<td class="num">×${h.qty}</td><td class="num">${fmtUSD(c.ref_price ?? null)}</td></tr>`;
+            `<td class="num">×${h.qty}</td><td class="num">${fmtUSD(c.ref_price ?? null)}</td>${remove}</tr>`;
         }).join("") +
         `</tbody></table>`
       : `<p class="muted">You don't hold any cards yet.</p>`);
@@ -185,14 +192,18 @@ function todoActions() {
   const items = [];
   if (!state.my_has_password) items.push({ text: "Set a login password so you can log in by name", done: false });
   if (state.phase === "primary") items.push({ text: "Acquire your cards — the bank is issuing them in the primary phase", done: false });
+  if (leagueOpen(state) && !(state.my_league_bids || []).length)
+    items.push({ text: "The weekly auction is open — place your bids before it closes", done: false });
   const ds = state.my_deliveries || [];
   const incoming = ds.filter((d) => d.buyer === me && d.status === "pending").length;
   const outgoing = ds.filter((d) => d.seller === me && d.status === "pending").length;
   if (incoming) items.push({ text: `Confirm ${incoming} delivery${incoming === 1 ? "" : " deliveries"} you've received`, done: false });
   if (outgoing) items.push({ text: `Hand off ${outgoing} card lot${outgoing === 1 ? "" : "s"} to buyers before the deadline`, done: false });
-  if (state.phase === "secondary" || state.phase === "finished") {
-    const hasAvail = !!(ladder && (ladder.my_availability || []).length);
-    items.push({ text: "Set your ladder availability so games get scheduled", done: hasAvail });
+  if (state.phase === "secondary" || state.phase === "finished" || state.phase === "league") {
+    // Satisfied by either a recurring weekly pattern or one-off slots. Only show
+    // it while unset, so it clears once availability is saved (like the others).
+    const hasAvail = !!(ladder && ((ladder.my_availability || []).length || (ladder.my_recurring || []).length));
+    if (!hasAvail) items.push({ text: "Set your ladder availability so games get scheduled", done: false });
   }
   return items;
 }
@@ -256,6 +267,10 @@ function renderTodoSchedule() {
       ? `closes ${fmtSlot(state.round_deadline)}`
       : `closes when the host clicks`;
     html += `<div class="sched-row"><b>${phaseLabel(state.phase)}</b> · round ${state.round} of ${state.total_rounds} — ${when}</div>`;
+  } else if (isLeague(state)) {
+    html += leagueOpen(state)
+      ? `<div class="sched-row"><b>Week ${state.round} auction</b> — closes ${fmtSlot(state.round_deadline)}</div>`
+      : `<div class="sched-row muted">No auction open — the next one starts when the host stocks the pool.</div>`;
   } else if (state.phase === "finished") {
     html += `<div class="sched-row muted">The auction is finished.</div>`;
   }
@@ -263,7 +278,7 @@ function renderTodoSchedule() {
   if (me != null) {
     if (state.phase === "primary") {
       html += `<div class="sched-row muted">Ladder games begin after the primary phase.</div>`;
-    } else if (state.phase === "secondary" || state.phase === "finished") {
+    } else if (state.phase === "secondary" || state.phase === "finished" || state.phase === "league") {
       const mine = ((ladder && ladder.matches) || [])
         .filter((m) => (m.a === me || m.b === me) && m.status === "scheduled")
         .sort((a, b) => a.slot_start - b.slot_start);
@@ -340,11 +355,7 @@ $("offer-form").onsubmit = async (e) => {
 $$(".tab").forEach((t) => (t.onclick = () => {
   activeTab = t.dataset.tab;
   $$(".tab").forEach((x) => x.classList.toggle("active", x === t));
-  $("tab-home").classList.toggle("hidden", activeTab !== "home");
-  $("tab-inventory").classList.toggle("hidden", activeTab !== "inventory");
-  $("tab-market").classList.toggle("hidden", activeTab !== "market");
-  $("tab-ladder").classList.toggle("hidden", activeTab !== "ladder");
-  $("tab-calendar").classList.toggle("hidden", activeTab !== "calendar");
+  $$(".tabpane").forEach((p) => p.classList.toggle("hidden", p.id !== "tab-" + activeTab));
 }));
 
 // Confirm receipt of an incoming delivery.

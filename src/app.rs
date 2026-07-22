@@ -300,10 +300,17 @@ pub async fn timer_loop(state: AppState) {
         tick += 1;
         let (changed, closed) = {
             let mut game = state.lock_game();
-            let due = matches!(game.phase, Phase::Primary | Phase::Secondary)
+            let due = matches!(game.phase, Phase::Primary | Phase::Secondary | Phase::League)
                 && game.round_deadline.is_some_and(|dl| now_epoch() >= dl);
             if due {
-                if let Ok(result) = game.close_round() {
+                let result = if game.phase == Phase::League {
+                    // Fresh seed per close so the tie-break shuffle differs week to week.
+                    let mut rng = crate::engine::Rng::new(now_epoch() ^ game.config.seed);
+                    game.close_league_auction(&mut rng)
+                } else {
+                    game.close_round()
+                };
+                if let Ok(result) = result {
                     game.record_deliveries(&result, now_epoch());
                 }
                 game.arm_timer(now_epoch());
