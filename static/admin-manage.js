@@ -15,12 +15,18 @@ async function loadLadder() {
 }
 
 // Host override controls (report finalises immediately, no confirmation).
-function overrideControls(m) {
+function overrideControls(m, league) {
+  const btn = (aw, bw, dw, who, label) =>
+    `<button class="primary rep-win" data-mid="${m.id}" data-aw="${aw}" data-bw="${bw}" data-dw="${dw}" data-who="${esc(who)}">${esc(label)}</button>`;
+  // League matches are best-of-three, so record the margin too.
+  const wins = league
+    ? btn(2, 0, 0, m.a_name, `${m.a_name} 2-0`) + btn(2, 1, 0, m.a_name, `${m.a_name} 2-1`) +
+      btn(1, 2, 0, m.b_name, `${m.b_name} 2-1`) + btn(0, 2, 0, m.b_name, `${m.b_name} 2-0`)
+    : btn(1, 0, 0, m.a_name, m.a_name) + btn(0, 1, 0, m.b_name, m.b_name);
   return `<span class="report-row winrow">
     <span class="muted">Winner:</span>
-    <button class="primary rep-win" data-mid="${m.id}" data-aw="1" data-bw="0" data-dw="0" data-who="${esc(m.a_name)}">${esc(m.a_name)}</button>
-    <button class="primary rep-win" data-mid="${m.id}" data-aw="0" data-bw="1" data-dw="0" data-who="${esc(m.b_name)}">${esc(m.b_name)}</button>
-    <button class="ghost rep-win" data-mid="${m.id}" data-aw="0" data-bw="0" data-dw="1" data-who="draw">Draw</button>
+    ${wins}
+    <button class="ghost rep-win" data-mid="${m.id}" data-aw="${league ? 1 : 0}" data-bw="${league ? 1 : 0}" data-dw="1" data-who="draw">Draw</button>
   </span>`;
 }
 
@@ -41,13 +47,18 @@ function renderLadder(l) {
 
   const box = $("ladder-matches");
   box.innerHTML = "";
+  const league = !!l.league;
+  $("btn-draw-unreported").hidden = !league;
+  $("pairings-box").hidden = !league;
   if (!matches.length) {
-    box.innerHTML = `<p class="muted">No matches yet — players set availability and a weekly target on the game page.</p>`;
+    box.innerHTML = league
+      ? `<p class="muted">No matches yet — they're assigned automatically once matchmaking opens.</p>`
+      : `<p class="muted">No matches yet — players set availability and a weekly target on the game page.</p>`;
     return;
   }
   const tbl = document.createElement("table");
   tbl.className = "grid";
-  tbl.innerHTML = `<thead><tr><th>When</th><th>Match</th><th>Result / override</th></tr></thead>`;
+  tbl.innerHTML = `<thead><tr><th>${league ? "Play by" : "When"}</th><th>Match</th><th>Result / override</th><th></th></tr></thead>`;
   const body = document.createElement("tbody");
   matches.slice().sort((a, b) => a.slot_start - b.slot_start).forEach((m) => {
     const tr = document.createElement("tr");
@@ -56,20 +67,30 @@ function renderLadder(l) {
     tr.appendChild(td(`${esc(m.a_name)} <span class="muted">vs</span> ${esc(m.b_name)}`));
     if (m.status === "completed") {
       // Show the winner, plus a way to correct a mistaken result.
-      tr.appendChild(td(`<div><b>${esc(matchResult(m))}</b></div><div class="muted">correct:</div>${overrideControls(m)}`));
+      tr.appendChild(td(`<div><b>${esc(matchResult(m))}</b></div><div class="muted">correct:</div>${overrideControls(m, league)}`));
     } else if (m.status === "cancelled") {
       const who = m.cancelled_by === m.a ? m.a_name : m.b_name;
       tr.appendChild(td(`<span class="muted">cancelled by ${esc(who)}</span>`));
     } else if (m.status === "expired") {
-      tr.appendChild(td(`<div class="muted">expired (no-show) — record it if it was played:</div>${overrideControls(m)}`));
+      tr.appendChild(td(`<div class="muted">unreported — record it if it was played:</div>${overrideControls(m, league)}`));
     } else {
-      tr.appendChild(td(overrideControls(m)));
+      tr.appendChild(td(overrideControls(m, league)));
     }
+    tr.appendChild(td(`<button class="linkbtn m-del" data-mid="${m.id}" title="delete this match from the record (reverts any ELO; standings recompute)">delete</button>`));
     body.appendChild(tr);
   });
   tbl.appendChild(body);
   box.appendChild(tbl);
 }
+
+$("btn-draw-unreported").onclick = async () => {
+  try {
+    const r = await api("/api/ladder/draw-unreported", "POST", {});
+    $("tourney-error").textContent = "";
+    toast(`Recorded ${r.recorded} unreported match${r.recorded === 1 ? "" : "es"} as 1-1 draws.`);
+    await refresh();
+  } catch (e) { $("tourney-error").textContent = e.message; }
+};
 
 $("btn-schedule").onclick = async () => {
   try {
@@ -80,8 +101,19 @@ $("btn-schedule").onclick = async () => {
   } catch (e) { $("tourney-error").textContent = e.message; }
 };
 
-// Delegated: host sets a result directly (override) by clicking the winner.
+// Delegated: host sets a result directly (override) by clicking the winner,
+// or deletes a match from the record entirely.
 $("ladder-matches").addEventListener("click", async (e) => {
+  const del = e.target.closest(".m-del");
+  if (del) {
+    if (!confirm("Delete this match from the record? Any applied ELO is reverted and standings recompute without it.")) return;
+    try {
+      await api("/api/ladder/delete", "POST", { match_id: Number(del.dataset.mid) });
+      $("tourney-error").textContent = "";
+      await refresh();
+    } catch (err) { $("tourney-error").textContent = err.message; }
+    return;
+  }
   const go = e.target.closest(".rep-win");
   if (!go) return;
   const prompt = go.dataset.who === "draw" ? "Set this match as a draw?" : `Set ${go.dataset.who} as the winner?`;
@@ -111,6 +143,13 @@ $("btn-offer-house").onclick = async () => {
   } catch (e) { $("manage-error").textContent = e.message; }
 };
 
+$("btn-save-set").onclick = async () => {
+  try {
+    await api("/api/set-code", "POST", { set: $("manage-set").value });
+    toast("Set code saved — future card lookups use it. Re-add a card to refresh its image/rarity.");
+  } catch (e) { $("manage-error").textContent = e.message; }
+};
+
 $("btn-add-cards").onclick = async () => {
   const card_list = $("add-cardlist").value;
   if (!card_list.trim()) return;
@@ -123,6 +162,39 @@ $("btn-add-cards").onclick = async () => {
     await refresh();
   } catch (e) { $("manage-error").textContent = e.message; }
   finally { btn.disabled = false; }
+};
+
+// Host: show every player's login link (e.g. to re-send a lost one).
+$("btn-show-tokens").onclick = async () => {
+  try {
+    const r = await api("/api/tokens");
+    showTokens(r.players);
+    $("tokens").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (e) { $("manage-error").textContent = e.message; }
+};
+
+$("btn-remove-player").onclick = async () => {
+  const name = $("remove-player-name").value.trim();
+  if (!name) return;
+  if (!confirm(`Remove ${name} from the game? Their cards go back to the house and their upcoming matches are dropped.`)) return;
+  try {
+    const r = await api("/api/players/remove", "POST", { name });
+    $("remove-player-name").value = "";
+    toast(`Removed ${esc(r.removed)}.`);
+    await refresh();
+  } catch (e) { $("manage-error").textContent = e.message; }
+};
+
+$("btn-pairings").onclick = async () => {
+  const text = $("pairings-text").value;
+  if (!text.trim()) return;
+  try {
+    const r = await api("/api/ladder/pairings", "POST", { text });
+    $("pairings-text").value = "";
+    $("tourney-error").textContent = "";
+    toast(`Set ${r.created} pairing${r.created === 1 ? "" : "s"}.`);
+    await refresh();
+  } catch (e) { $("tourney-error").textContent = e.message; }
 };
 
 $("btn-add-player").onclick = async () => {

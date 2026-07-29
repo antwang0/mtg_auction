@@ -20,6 +20,7 @@
       <input id="token-input" type="text" placeholder="or host token" autocomplete="off" />
       <button id="btn-login" class="ghost">Token</button>
       <button id="btn-logout" class="ghost hidden">Log out</button>
+      <a class="navlink" href="/matches" title="Machine-readable match schedule and standings (tab-separated plain text)">Matches</a>
       <a class="navlink" href="/">← Game</a>
     </div>
   </header>
@@ -33,7 +34,7 @@
       <div id="players-list" class="players-list"></div>
       <div class="player-actions">
         <button id="btn-add-player-row" type="button" class="ghost add-player-btn">+ Add player</button>
-        <button id="btn-import-players" type="button" class="ghost add-player-btn" title="Load names from a CSV or text file — one name per line, or the first column of a CSV (a header row is skipped)">Import CSV…</button>
+        <button id="btn-import-players" type="button" class="ghost add-player-btn" title="Load names from a CSV or text file — one name per line, a comma-separated list, or the first column of a CSV (a header row is skipped). You can also paste a comma-separated list straight into any name field.">Import CSV…</button>
         <input id="import-players-csv" type="file" accept=".csv,.txt,text/csv,text/plain" hidden />
         <span id="import-players-msg" class="muted"></span>
       </div>
@@ -41,7 +42,7 @@
       <fieldset class="mode-source">
         <legend>Game mode</legend>
         <label class="radio"><input type="radio" name="mode" value="standard" checked /> Standard — open packs here, primary + secondary auction phases</label>
-        <label class="radio"><input type="radio" name="mode" value="league" /> League — physical packs, weekly bank auctions, stipends, no selling</label>
+        <label class="radio"><input type="radio" name="mode" value="league" /> League — physical packs, recurring bank auctions, stipends, no selling</label>
       </fieldset>
 
       <div class="mode-pane" data-mode="league" hidden>
@@ -51,7 +52,10 @@
             <label>Booster packs per player <span class="muted">(physical, informational)</span>
               <input id="cfg-lg-packs" type="number" value="6" min="0" max="1000" />
             </label>
-            <label>Weekly stipend ($)
+            <label>Set code(s) <span class="muted">(optional — card images &amp; rarities from these printings, in order; list companion sets too, e.g. "sos soa")</span>
+              <input id="cfg-lg-set" type="text" placeholder="e.g. sos soa" autocomplete="off" />
+            </label>
+            <label>Stipend per auction ($) <span class="muted">(paid to everyone after each close)</span>
               <input id="cfg-lg-stipend" type="number" step="0.01" min="0" value="25.00" />
             </label>
             <label>League timezone <span class="muted">(all dates below are in this zone)</span>
@@ -70,6 +74,12 @@
             <label>Every N weeks
               <input id="cfg-lg-period" type="number" value="1" min="1" max="8" />
             </label>
+            <label>Matches per round <span class="muted">(N: each round assigns N matches per player, all due at the round's close)</span>
+              <input id="cfg-lg-batch" type="number" value="2" min="1" max="20" />
+            </label>
+            <label>Rounds <span class="muted">(season = rounds × N matches each; an auction between rounds)</span>
+              <input id="cfg-lg-rounds" type="number" value="3" min="1" max="20" />
+            </label>
             <label>First matchmaking date
               <input id="cfg-lg-mm" type="date" />
             </label>
@@ -81,7 +91,7 @@
             </label>
           </div>
           <p id="cfg-lg-hint" class="muted"></p>
-          <p class="muted">Matchmaking defaults to <strong>this Sunday</strong> and the first auction to <strong>the next Sunday</strong> (change either above). Ladder games are scheduled from the matchmaking date on; auctions close weekly on their series dates at the time above (in the league timezone), stopping after the last auction date. Each cycle you add a card pool from the Manage section — that opens the auction. Top bids per card win a copy each and pay what they bid; unsold cards carry over; everyone gets the stipend after each close. Players cannot sell.</p>
+          <p class="muted">Matchmaking opens <strong>immediately</strong> by default: rounds are strictly synchronized — every round assigns N matches per player at once, all due at the round's close, and the next round posts only after that close passes (rounds × N matches in total). The auction dates default to the end of each round except the last (change any of them above). Each cycle you add a card pool from the Manage section — that opens the auction. At the close, cards resolve rarest first; a card's top bids win a copy each at the Nth-highest-bid clearing price ($0 when bids are fewer than copies, leftovers going to random non-bidders); everyone gets the stipend after each close. Players cannot sell.</p>
         </fieldset>
       </div>
 
@@ -260,7 +270,7 @@
         <div class="admin">
           <button id="btn-league-open" class="primary">Open the auction over the current pool</button>
         </div>
-        <p class="muted">Adding cards below opens the auction automatically; this button covers re-opening over carried-over unsold cards without adding anything new. The auction closes at the configured weekly time (top bids per card win, pay-as-bid), pays every player the stipend, and then waits for the next pool.</p>
+        <p class="muted">Adding cards below opens the auction automatically; this button covers re-opening over any carried-over cards without adding anything new. The auction closes at the next scheduled date — cards resolve rarest first; each card clears at its Nth-highest bid ($0 when real bids are fewer than copies, with leftovers handed to random non-bidders) — pays every player the stipend, and then waits for the next pool.</p>
       </div>
 
       <h3 id="house-heading">House inventory <span class="muted">(unallocated cards)</span></h3>
@@ -279,13 +289,27 @@
         <textarea id="add-cardlist" rows="4" placeholder="2 Llanowar Elves&#10;1 Shivan Dragon"></textarea>
       </label>
       <div class="admin"><button id="btn-add-cards" class="primary">Add cards to house</button></div>
+      <div class="order-row">
+        <label>Set code(s) <span class="muted">— card lookups pinned to these printings, in order (e.g. "sos soa" for a set plus its companion set). Re-adding a card refreshes its image/rarity.</span>
+          <input id="manage-set" type="text" placeholder="e.g. sos soa" autocomplete="off" />
+        </label>
+        <button id="btn-save-set" class="ghost">Save set code</button>
+      </div>
 
       <h3>Add player</h3>
       <div class="order-row">
+        <button id="btn-show-tokens" class="ghost" title="Show every player's login link, e.g. to re-send a lost one. Share each link privately.">Show login links</button>
         <input id="add-player-name" type="text" placeholder="new player name" autocomplete="off" />
         <button id="btn-add-player" class="primary">Add player</button>
       </div>
       <p class="muted">The new player is dealt their initial per-rarity allocation from the house and gets a token (shown above for sharing).</p>
+
+      <h3>Remove player</h3>
+      <div class="order-row">
+        <input id="remove-player-name" type="text" placeholder="player name" autocomplete="off" />
+        <button id="btn-remove-player" class="sell">Remove player</button>
+      </div>
+      <p class="muted">Their cards return to the house, their upcoming matches are dropped (freed opponents are re-paired automatically), and completed results stay on the record. The host can't be removed.</p>
 
       <div id="manage-error" class="error"></div>
     </section>
@@ -314,6 +338,14 @@
       <div id="ladder-info" class="muted"></div>
       <div class="admin">
         <button id="btn-schedule" class="primary">Run scheduler now</button>
+        <button id="btn-draw-unreported" class="ghost" title="Record every match whose play-by deadline has passed without a result as a 1-1 draw. Individual results can still be corrected below afterwards.">Record unreported as draws</button>
+      </div>
+      <div id="pairings-box" hidden>
+        <h3>Override pairings</h3>
+        <label class="cardlist-field">One match per line — two player names separated by a comma (needed when names contain spaces), tab, or " vs ". Listed players' upcoming matches are replaced; anyone that frees up is re-paired automatically.
+          <textarea id="pairings-text" rows="4" placeholder="Alice, Bob&#10;Carol, Dave"></textarea>
+        </label>
+        <button id="btn-pairings" class="primary">Apply pairings</button>
       </div>
       <h3>Standings</h3>
       <table id="standings" class="grid">

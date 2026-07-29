@@ -60,31 +60,65 @@ function comingSundayDay() {
   return t + (7 - wd) % 7;
 }
 
-// Fill the matchmaking/first-auction dates with their defaults (this Sunday /
-// next Sunday) unless the host has already set them.
+// Fill the schedule with its round-aligned defaults unless the host has
+// already set dates: matchmaking today (the first N matches are assigned
+// immediately), an auction closing at the end of each round except the last —
+// every N weeks, rounds − 1 times.
 let leagueDatesTouched = false;
 function fillLeagueDateDefaults(force = false) {
   if (leagueDatesTouched && !force) return;
-  const sun = comingSundayDay();
-  $("cfg-lg-mm").value = epochDayToDateStr(sun);
-  $("cfg-lg-first").value = epochDayToDateStr(sun + 7);
+  const n = Math.max(1, Number($("cfg-lg-batch").value) || 2);
+  const rounds = Math.max(1, Number($("cfg-lg-rounds").value) || 3);
+  const today = leagueTodayDay();
+  $("cfg-lg-mm").value = epochDayToDateStr(today);
+  $("cfg-lg-period").value = Math.min(n, 8);
+  $("cfg-lg-first").value = epochDayToDateStr(today + 7 * n);
+  $("cfg-lg-last").value = epochDayToDateStr(today + 7 * n * Math.max(1, rounds - 1));
 }
-["cfg-lg-mm", "cfg-lg-first", "cfg-lg-last"].forEach((id) =>
+["cfg-lg-mm", "cfg-lg-first", "cfg-lg-last", "cfg-lg-period"].forEach((id) =>
   $(id).addEventListener("input", () => { leagueDatesTouched = true; updateLeagueHint(); })
 );
+// Changing the rhythm re-derives the (untouched) schedule.
+["cfg-lg-batch", "cfg-lg-rounds"].forEach((id) =>
+  $(id).addEventListener("input", () => { fillLeagueDateDefaults(); updateLeagueHint(); })
+);
 
+// The full season, laid out so the host can sanity-check the schedule before
+// starting: one line per round (match window + the auction that closes with
+// it), built from the same inputs the server will use.
 function updateLeagueHint() {
-  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const n = Math.max(1, Number($("cfg-lg-batch").value) || 2);
+  const rounds = Math.max(1, Number($("cfg-lg-rounds").value) || 3);
+  const mm = dateStrToEpochDay($("cfg-lg-mm").value) || leagueTodayDay();
   const first = dateStrToEpochDay($("cfg-lg-first").value);
   const last = dateStrToEpochDay($("cfg-lg-last").value);
-  const wd = first ? days[((first + 4) % 7 + 7) % 7] : "?";
+  const period = Math.max(1, Number($("cfg-lg-period").value) || n);
   const hh = String(leagueCloseHour()).padStart(2, "0");
   const tz = $("cfg-lg-tz").selectedOptions[0].textContent.split(" ")[0];
-  let msg = first
-    ? `Auctions close ${wd}s at ${hh}:00 ${tz}, every ${$("cfg-lg-period").value} week(s), starting ${$("cfg-lg-first").value}.`
-    : "Set a first auction date.";
-  if (last) msg += ` Last auction ${$("cfg-lg-last").value}.`;
-  $("cfg-lg-hint").textContent = msg;
+  // The auction series: first, then every `period` weeks up to `last`.
+  const auctions = [];
+  if (first) {
+    for (let a = first; (!last || a <= last) && auctions.length < 20; a += 7 * period) auctions.push(a);
+  }
+  // Match play-by deadlines snap to the auction series (its cadence continues
+  // past the last auction for the final round); without a first-auction date
+  // they fall back to N weeks per round.
+  const closeDay = (r) => (first ? first + (r - 1) * 7 * period : mm + r * 7 * n);
+  const lines = [
+    `<b>Season preview</b> — ${rounds} round${rounds === 1 ? "" : "s"} × ${n} match${n === 1 ? "" : "es"} ` +
+    `(${rounds * n} matches per player), ${auctions.length} auction${auctions.length === 1 ? "" : "s"}:`,
+  ];
+  for (let r = 1; r <= rounds; r++) {
+    const start = r === 1 ? mm : closeDay(r - 1);
+    let line = `Round ${r}: matches assigned ${epochDayToDateStr(start)}, play by ${epochDayToDateStr(closeDay(r))} at ${hh}:00 ${tz}`;
+    line += r <= auctions.length ? ` · auction ${r} closes at the same time` : ` (no auction)`;
+    lines.push(line);
+  }
+  for (let a = rounds + 1; a <= auctions.length; a++) {
+    lines.push(`Auction ${a} closes ${epochDayToDateStr(auctions[a - 1])} at ${hh}:00 ${tz} (after the last round!)`);
+  }
+  lines.push(`Season ends ${epochDayToDateStr(closeDay(rounds))}. Rounds are strictly synchronized: everyone's next-round matches post together when the previous round closes.`);
+  $("cfg-lg-hint").innerHTML = lines.join("<br>");
 }
 // Changing the timezone re-derives the default dates (host edits stick).
 $("cfg-lg-tz").addEventListener("change", () => { fillLeagueDateDefaults(); updateLeagueHint(); });
@@ -111,8 +145,28 @@ function addPlayerRow(name = "", focus = false) {
   const input = document.createElement("input");
   input.type = "text"; input.className = "player-name"; input.value = name;
   input.placeholder = "player name"; input.autocomplete = "off";
+  // A comma-separated list in a name field ("john,test1,test2") is a roster,
+  // not one player: split it into rows. Runs on change/Enter (not on every
+  // keystroke) so it catches any entry path — paste, middle-click, drag-drop.
+  const splitIfList = () => {
+    const v = input.value;
+    if (!v.includes(",")) return false;
+    input.value = "";
+    $("import-players-msg").textContent = importNames(parseCsvNames(v));
+    return true;
+  };
+  input.addEventListener("change", splitIfList);
   // Enter adds (and jumps to) the next row, so a host can rattle off names.
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addPlayerRow("", true); } });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); if (!splitIfList()) addPlayerRow("", true); }
+  });
+  // Pasting a comma-separated (or multi-line) list imports it immediately.
+  input.addEventListener("paste", (e) => {
+    const text = (e.clipboardData || window.clipboardData).getData("text") || "";
+    if (!/[,\n]/.test(text)) return; // an ordinary single-name paste
+    e.preventDefault();
+    $("import-players-msg").textContent = importNames(parseCsvNames(text));
+  });
   const del = document.createElement("button");
   del.type = "button"; del.className = "ghost player-del"; del.title = "remove player"; del.textContent = "×";
   del.addEventListener("click", () => {
@@ -131,14 +185,18 @@ $("btn-add-player-row").onclick = () => addPlayerRow("", true);
 const DEFAULT_PLAYERS = ["Alice", "Bob", "Carol", "Dave"];
 DEFAULT_PLAYERS.forEach((n) => addPlayerRow(n));
 
-// ---- import players from a CSV / text file ----
-// Each line is one player; the name is the first CSV field (quotes handled), so a
-// plain name list or a multi-column CSV both work. A leading header row like
-// "name" / "player" is skipped.
+// ---- import players from a CSV / text file or a pasted list ----
+// A single line containing commas is a comma-separated list of names
+// ("Alice, Bob, Carol"). Otherwise each line is one player; the name is the
+// first CSV field (quotes handled), so a plain name list or a multi-column CSV
+// both work. A leading header row like "name" / "player" is skipped.
 function parseCsvNames(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length === 1 && lines[0].includes(",") && !lines[0].includes('"')) {
+    return lines[0].split(",").map((n) => n.trim()).filter(Boolean);
+  }
   const names = [];
-  text.split(/\r?\n/).forEach((line) => {
-    if (!line.trim()) return;
+  lines.forEach((line) => {
     const quoted = line.match(/^\s*"((?:[^"]|"")*)"/); // a leading "quoted" field
     const raw = quoted ? quoted[1].replace(/""/g, '"') : line.split(",")[0];
     const name = raw.trim();
@@ -146,6 +204,30 @@ function parseCsvNames(text) {
   });
   if (names.length && /^(name|player|players|player[ _]?name)$/i.test(names[0])) names.shift();
   return names;
+}
+
+// Merge names into the roster (replacing the untouched sample roster, skipping
+// duplicates, capping at 200) and return a summary message.
+function importNames(names) {
+  if (!names.length) return "No names found.";
+  const current = playerNames();
+  const isDefaults = current.length === DEFAULT_PLAYERS.length && current.every((n, i) => n === DEFAULT_PLAYERS[i]);
+  if (isDefaults) $("players-list").innerHTML = "";
+  const have = new Set(playerNames().map((n) => n.toLowerCase()));
+  let added = 0, dupes = 0, capped = 0;
+  for (const name of names) {
+    if (have.has(name.toLowerCase())) { dupes++; continue; }
+    if ($("players-list").querySelectorAll(".player-name").length >= 200) { capped++; continue; }
+    addPlayerRow(name);
+    have.add(name.toLowerCase());
+    added++;
+  }
+  pruneEmptyPlayerRows();
+  markHostRow();
+  setupPreview();
+  return `Imported ${added} player${added === 1 ? "" : "s"}` +
+    (dupes ? `, skipped ${dupes} duplicate${dupes === 1 ? "" : "s"}` : "") +
+    (capped ? `, ${capped} over the 200-player limit` : "") + ".";
 }
 
 // Drop empty name rows (but always leave at least one field to type in).
@@ -162,27 +244,7 @@ $("import-players-csv").addEventListener("change", async (e) => {
   const msg = $("import-players-msg");
   if (!file) return;
   try {
-    const names = parseCsvNames(await file.text());
-    if (!names.length) { msg.textContent = "No names found in that file."; e.target.value = ""; return; }
-    // If the roster is still the untouched sample, replace it; otherwise append.
-    const current = playerNames();
-    const isDefaults = current.length === DEFAULT_PLAYERS.length && current.every((n, i) => n === DEFAULT_PLAYERS[i]);
-    if (isDefaults) $("players-list").innerHTML = "";
-    const have = new Set(playerNames().map((n) => n.toLowerCase()));
-    let added = 0, dupes = 0, capped = 0;
-    for (const name of names) {
-      if (have.has(name.toLowerCase())) { dupes++; continue; }
-      if ($("players-list").querySelectorAll(".player-name").length >= 64) { capped++; continue; }
-      addPlayerRow(name);
-      have.add(name.toLowerCase());
-      added++;
-    }
-    pruneEmptyPlayerRows();
-    markHostRow();
-    setupPreview();
-    msg.textContent = `Imported ${added} player${added === 1 ? "" : "s"}` +
-      (dupes ? `, skipped ${dupes} duplicate${dupes === 1 ? "" : "s"}` : "") +
-      (capped ? `, ${capped} over the 64-player limit` : "") + ".";
+    msg.textContent = importNames(parseCsvNames(await file.text()));
   } catch (err) {
     msg.textContent = "Could not read that file: " + err.message;
   }
@@ -422,12 +484,16 @@ $("btn-setup").onclick = async () => {
     league_tz_offset_mins: leagueTzMins(),
     league_close_hour: leagueCloseHour(),
     league_period_weeks: Number($("cfg-lg-period").value) || 1,
+    league_pending_per_player: Number($("cfg-lg-batch").value) || 2,
+    league_rounds: Number($("cfg-lg-rounds").value) || 3,
     league_first_auction_day: dateStrToEpochDay($("cfg-lg-first").value),
     league_last_auction_day: dateStrToEpochDay($("cfg-lg-last").value),
     league_matchmaking_start_day: dateStrToEpochDay($("cfg-lg-mm").value),
     player_names: names,
     pool_source: pool,
-    set: $("cfg-set").value.trim() || "sample",
+    // League games use the set code to pin card lookups (image/rarity) to the
+    // set being played; standard games use it as the Scryfall pool source.
+    set: (league ? $("cfg-lg-set").value.trim() : $("cfg-set").value.trim()) || "sample",
     card_list: $("cfg-cardlist").value,
     starting_money: toCents($("cfg-money").value),
     debt_limit: toCents($("cfg-debt").value),

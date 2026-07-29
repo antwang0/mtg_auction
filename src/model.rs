@@ -11,7 +11,8 @@ pub type CardId = u32;
 /// Money, in whole US cents (e.g. `1234` = $12.34).
 pub type Cents = i64;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Ordered from least to most rare, so `Ord` ranks Mythic highest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Rarity {
     Common,
@@ -424,8 +425,10 @@ pub enum MatchStatus {
     Completed,
     /// Called off by one player, who took the ELO penalty.
     Cancelled,
-    /// The slot passed without a confirmed result (a no-show). No ELO change;
-    /// the pair can be rescheduled.
+    /// Legacy status from when unreported matches auto-expired; no longer
+    /// produced (unreported matches now stay scheduled, count as ties for
+    /// matchmaking, and can be reported at any time). Kept so old saves load;
+    /// a result can still be recorded on one.
     Expired,
 }
 
@@ -485,6 +488,16 @@ pub struct Standing {
     /// Upcoming (still-scheduled) matches.
     pub scheduled: u32,
     pub cancellations: u32,
+    /// Swiss match points (3 per match win, 1 per drawn match).
+    pub points: i64,
+    /// Individual games won/lost across completed matches — the best-of-three
+    /// margin tiebreak (a 2-0 win ranks above a 2-1 win).
+    pub game_wins: u32,
+    pub game_losses: u32,
+    /// Opponents' match-win percentage (strength of schedule): the average of
+    /// each opponent's match points over their possible points, floored at 1/3
+    /// per opponent (the usual swiss convention). 0 with no completed matches.
+    pub omw: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -513,23 +526,26 @@ pub enum GameMode {
     /// leftovers in a primary phase, then players trade in a secondary phase.
     #[default]
     Standard,
-    /// Weekly league: players open physical booster packs themselves (tracked
+    /// League: players open physical booster packs themselves (tracked
     /// manually, if at all), and the bank runs a recurring sealed-bid auction
-    /// over a host-stocked pool. Players only buy — the top bids per card win
-    /// (pay-as-bid), unsold cards carry over, and everyone receives a stipend
-    /// after each close. No fixed end; the ELO ladder runs from the start.
+    /// over a host-stocked pool between swiss match rounds. Players only buy —
+    /// cards resolve rarest-first, a card's top bids each win one copy at a
+    /// uniform Nth-highest-bid clearing price, unsold cards carry over, and
+    /// everyone receives a stipend after each close. The season runs
+    /// [`Config::league_rounds`] rounds of assigned best-of-three matches.
     League,
 }
 
 /// One resting league-auction bid: one copy of one card at a price. A player
-/// may hold any number of these, including several on the same card at
-/// different prices (each competes for one copy).
+/// keeps at most one bid per card (re-bidding replaces it).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LeagueBid {
     pub id: u64,
     pub player: PlayerId,
     pub card: CardId,
-    /// What the player pays if this bid wins (pay-as-bid).
+    /// The most the player will pay. If the bid wins it pays the card's
+    /// uniform clearing price (the Nth-highest bid for N copies), and it is
+    /// amended down to the player's remaining balance as the close resolves.
     pub price: Cents,
 }
 
@@ -556,8 +572,10 @@ pub struct Config {
     /// Which of the mutually-exclusive pool sources this game uses.
     #[serde(default)]
     pub pool_source: PoolSource,
-    /// Scryfall set code to draft from (e.g. `"dom"`); used when
-    /// `pool_source == Scryfall`.
+    /// Scryfall set code (e.g. `"dom"`). For `pool_source == Scryfall` it is
+    /// the set to draft from; for manual/league card lists it pins name
+    /// lookups to that set's printing (image, rarity), with a fallback to any
+    /// printing for names the set doesn't contain. `"sample"`/empty = unset.
     #[serde(default = "default_set")]
     pub set: String,
     /// A manual card pool — a decklist-style text, one `<qty> <name>` per line;
@@ -664,6 +682,22 @@ pub struct Config {
     /// before it. `0` means "derive at setup" — this Sunday.
     #[serde(default)]
     pub league_matchmaking_start_day: i64,
+    /// N, the matches per league round. Rounds are strictly synchronized:
+    /// round r's matches are all assigned once round r−1's close has passed
+    /// and all share round r's close as their play-by deadline (an unreported
+    /// match past its deadline counts as a provisional tie until the result
+    /// is added — it never delays the next round). Round 1 is assigned when
+    /// the game starts (or on the matchmaking start day).
+    #[serde(default = "default_league_pending", alias = "league_batch_size")]
+    pub league_pending_per_player: u32,
+    /// How many rounds of N matches the league season runs: each player plays
+    /// `rounds × N` matches in total. An auction falls between consecutive
+    /// rounds (`rounds − 1` auctions), closing at the same deadline as the
+    /// round's matches — with the defaults (3 rounds × 2 matches) that's 6
+    /// matches and 2 auctions. When the host leaves the auction dates unset,
+    /// the schedule is derived to match this cadence.
+    #[serde(default = "default_league_rounds")]
+    pub league_rounds: u32,
 }
 
 fn default_league_packs() -> u32 {
@@ -680,6 +714,12 @@ fn default_league_close_hour() -> u32 {
 }
 fn default_league_period() -> u32 {
     1
+}
+fn default_league_pending() -> u32 {
+    2
+}
+fn default_league_rounds() -> u32 {
+    3
 }
 
 fn default_block_hours() -> Vec<u32> {
@@ -755,6 +795,8 @@ impl Default for Config {
             league_first_auction_day: 0,
             league_last_auction_day: 0,
             league_matchmaking_start_day: 0,
+            league_pending_per_player: default_league_pending(),
+            league_rounds: default_league_rounds(),
         }
     }
 }

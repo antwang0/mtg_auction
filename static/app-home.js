@@ -35,6 +35,22 @@ function stat(label, value) {
 }
 
 function renderHome() {
+  // League home is a lean summary: cash remaining and bids placed (cards and
+  // orders live on the Auction tab; there is no order book).
+  const league = state && isLeague(state);
+  $("home-orders-sec").classList.toggle("hidden", !!league);
+  $("home-cards-title").textContent = league ? "Your League" : "Your Cards";
+  if (league) {
+    const box = $("home-cards");
+    const me = myPlayerView();
+    box.innerHTML = me
+      ? `<div class="stat-row">` +
+        stat("Cash remaining", fmtUSD(me.balance)) +
+        stat("Bids placed", String((state.my_league_bids || []).length)) +
+        `</div>`
+      : `<p class="muted">Log in to see your league summary.</p>`;
+    return;
+  }
   renderHomeCards();
   renderHomeOrders();
 }
@@ -193,13 +209,20 @@ function todoActions() {
   if (!state.my_has_password) items.push({ text: "Set a login password so you can log in by name", done: false });
   if (state.phase === "primary") items.push({ text: "Acquire your cards — the bank is issuing them in the primary phase", done: false });
   if (leagueOpen(state) && !(state.my_league_bids || []).length)
-    items.push({ text: "The weekly auction is open — place your bids before it closes", done: false });
+    items.push({ text: "Place bids — the auction is open and you have none resting", done: false });
+  // Matches awaiting play (or an unreported result): anything still scheduled.
+  const toPlay = ((ladder && ladder.matches) || [])
+    .filter((m) => (m.a === me || m.b === me) && m.status === "scheduled").length;
+  if (toPlay)
+    items.push({ text: `Play and submit your game${toPlay === 1 ? "" : "s"} — ${toPlay} match${toPlay === 1 ? "" : "es"} awaiting a result`, done: false });
   const ds = state.my_deliveries || [];
   const incoming = ds.filter((d) => d.buyer === me && d.status === "pending").length;
   const outgoing = ds.filter((d) => d.seller === me && d.status === "pending").length;
   if (incoming) items.push({ text: `Confirm ${incoming} delivery${incoming === 1 ? "" : " deliveries"} you've received`, done: false });
   if (outgoing) items.push({ text: `Hand off ${outgoing} card lot${outgoing === 1 ? "" : "s"} to buyers before the deadline`, done: false });
-  if (state.phase === "secondary" || state.phase === "finished" || state.phase === "league") {
+  // League matches are assigned automatically — availability is only a
+  // standard-mode concept.
+  if (state.phase === "secondary" || state.phase === "finished") {
     // Satisfied by either a recurring weekly pattern or one-off slots. Only show
     // it while unset, so it clears once availability is saved (like the others).
     const hasAvail = !!(ladder && ((ladder.my_availability || []).length || (ladder.my_recurring || []).length));
@@ -269,7 +292,7 @@ function renderTodoSchedule() {
     html += `<div class="sched-row"><b>${phaseLabel(state.phase)}</b> · round ${state.round} of ${state.total_rounds} — ${when}</div>`;
   } else if (isLeague(state)) {
     html += leagueOpen(state)
-      ? `<div class="sched-row"><b>Week ${state.round} auction</b> — closes ${fmtSlot(state.round_deadline)}</div>`
+      ? `<div class="sched-row"><b>Auction ${state.round}</b> — closes ${fmtSlot(state.round_deadline)}</div>`
       : `<div class="sched-row muted">No auction open — the next one starts when the host stocks the pool.</div>`;
   } else if (state.phase === "finished") {
     html += `<div class="sched-row muted">The auction is finished.</div>`;
@@ -282,11 +305,15 @@ function renderTodoSchedule() {
       const mine = ((ladder && ladder.matches) || [])
         .filter((m) => (m.a === me || m.b === me) && m.status === "scheduled")
         .sort((a, b) => a.slot_start - b.slot_start);
+      const lg = isLeague(state);
       html += mine.length
         ? `<h4>Your upcoming games</h4>` + mine.map((m) => {
             const opp = m.a === me ? m.b_name : m.a_name;
-            return `<div class="sched-row">🎲 vs <b>${esc(opp)}</b> · ${fmtSlot(m.slot_start)}</div>`;
+            const when = lg ? `play by ${fmtSlot(m.slot_start)}` : fmtSlot(m.slot_start);
+            return `<div class="sched-row">🎲 vs <b>${esc(opp)}</b> · ${when}</div>`;
           }).join("")
+        : lg
+        ? `<div class="sched-row muted">No games assigned right now — new matches arrive as your current ones finish.</div>`
         : `<div class="sched-row muted">No games scheduled — set your availability on the Ladder tab.</div>`;
     }
   }

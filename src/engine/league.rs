@@ -1,12 +1,18 @@
 //! League mode: the recurring sealed-bid bank auction and manual inventory.
 //!
-//! Each cycle the host stocks the house with a card pool (unsold cards carry
-//! over automatically because the house keeps them), which opens an auction
-//! closing at a fixed calendar point (a configured UTC weekday + hour). Players
-//! place any number of single-copy bids; at the close the top `qty` bids per
-//! card win and pay their own bid (ties broken randomly). Winnings go straight
-//! into the winner's holdings (a delivery tracks the physical hand-off), and
-//! every player then receives the weekly stipend. Players never sell.
+//! Each cycle the host stocks the house with a card pool, which opens an
+//! auction closing at a fixed calendar point (a configured UTC weekday +
+//! hour). Players place at most one single-copy bid per card, with no cap on
+//! the total money tied up across bids. At the close, cards resolve one at a
+//! time — rarest first, then alphabetically. Every player implicitly bids 0
+//! on every card, so a card with `qty` copies clears at a uniform price: the
+//! `qty`-th highest real bid, or 0 when there are fewer real bids than
+//! copies. Real bidders win copies first (ties broken randomly); remaining
+//! copies go to random non-bidders for free, one per player (only copies
+//! beyond one-per-player carry over). As winners pay, any of their remaining
+//! bids that exceed their remaining balance are amended down to it. Winnings
+//! go straight into the winner's holdings, and every player then receives the
+//! stipend. Players never sell.
 
 use super::{Game, Rng, HOUSE_ID, MAX_PRICE};
 use crate::model::*;
@@ -83,15 +89,18 @@ impl Game {
         Ok(close)
     }
 
-    /// Place one single-copy bid on a card in the open auction. Multiple bids
-    /// per card (at any prices) are allowed; each competes for one copy. The
-    /// player's total resting bids may never exceed their balance (no debt).
+    /// Place (or re-price) a single-copy bid on a card in the open auction.
+    /// Each player may bid for at most one copy of a given card, so bidding on
+    /// a card you already bid on replaces the old bid. No single bid may
+    /// exceed the player's current balance, but there is no cap on the total
+    /// tied up across bids — bids that exceed the remaining balance at
+    /// resolution time are amended down to it.
     pub fn place_league_bid(&mut self, player: PlayerId, card: CardId, price: Cents) -> Result<u64, String> {
         self.require_league()?;
         if self.round_deadline.is_none() {
             return Err("the auction is closed — wait for the next pool".into());
         }
-        let p = self.players.get(&player).ok_or("no such player")?;
+        let balance = self.players.get(&player).ok_or("no such player")?.balance;
         if !self.cards.contains_key(&card) {
             return Err("no such card".into());
         }
@@ -104,16 +113,15 @@ impl Game {
         if price > MAX_PRICE {
             return Err("price is too high".into());
         }
+        // No single bid may exceed the current balance (the *total* across
+        // bids is uncapped; over-committed bids amend down at the close).
+        if price > balance {
+            return Err(format!("your balance is {balance} — a single bid can't exceed it"));
+        }
+        // One bid per (player, card): a new bid replaces the old one.
+        self.league_bids.retain(|b| !(b.player == player && b.card == card));
         if self.league_bids.iter().filter(|b| b.player == player).count() >= MAX_LEAGUE_BIDS {
             return Err("too many resting bids — cancel some first".into());
-        }
-        let committed = self.league_committed(player);
-        if committed.saturating_add(price) > p.balance {
-            return Err(format!(
-                "bids would commit {} but your balance is only {} (no debt in league mode)",
-                committed + price,
-                p.balance
-            ));
         }
         self.league_bid_seq += 1;
         let id = self.league_bid_seq;
@@ -135,64 +143,105 @@ impl Game {
         Ok(())
     }
 
-    /// Close the open auction: for each pooled card, the top `qty` bids win and
-    /// pay their own bid (ties broken randomly via the pre-sort shuffle). All
-    /// bids are then cleared, the auction closes (the host re-opens it by
-    /// stocking next week's pool), and every player receives the stipend.
+    /// Close the open auction. Cards resolve one at a time, rarest first and
+    /// then alphabetically. Every player implicitly bids 0 on every card, so
+    /// each copy always finds a home: with `qty` copies the clearing price is
+    /// the `qty`-th highest bid counting those implicit zeros — i.e. the
+    /// `qty`-th highest real bid, or **0 whenever there are fewer real bids
+    /// than copies**. All copies of a card trade at that one price. The real
+    /// bidders win copies first (ties broken randomly via the pre-sort
+    /// shuffle); copies beyond the real bids go to random players who didn't
+    /// bid on the card, one each, for free. Bids are amended down to the
+    /// bidder's remaining balance as it is spent, so a resolution never pushes
+    /// anyone into debt. All bids are then cleared, the auction closes (the
+    /// host re-opens it by stocking next week's pool), and every player
+    /// receives the stipend.
     pub fn close_league_auction(&mut self, rng: &mut Rng) -> Result<RoundResult, String> {
         self.require_league()?;
         if self.round_deadline.is_none() {
             return Err("no auction is open".into());
         }
 
+        // Resolution order: rarity (mythic → common), then name.
+        let mut order: Vec<CardId> = self.house.holdings.keys().copied().collect();
+        order.sort_by(|&a, &b| {
+            let (ca, cb) = (&self.cards[&a], &self.cards[&b]);
+            cb.rarity.cmp(&ca.rarity).then_with(|| ca.name.cmp(&cb.name))
+        });
+
         let mut trades: Vec<Trade> = Vec::new();
         let mut clears: Vec<CardClear> = Vec::new();
-        // Card-order iteration keeps results deterministically ordered.
-        for card in self.card_order.clone() {
+        for card in order {
             let avail = self.house.held(card);
+            if avail == 0 {
+                continue;
+            }
             let mut bids: Vec<LeagueBid> =
                 self.league_bids.iter().filter(|b| b.card == card).cloned().collect();
-            if bids.is_empty() {
-                continue;
+            // Amend each bid down to the bidder's current balance — money spent
+            // on earlier (rarer) cards is no longer available here.
+            for b in &mut bids {
+                b.price = b.price.min(self.players[&b.player].balance).max(0);
             }
             // Random tie-break: shuffle, then a *stable* sort by price leaves
             // equal-priced bids in shuffled order.
             rng.shuffle(&mut bids);
             bids.sort_by_key(|b| std::cmp::Reverse(b.price));
 
+            // Uniform clearing price: the `avail`-th highest bid, counting the
+            // implicit 0 bid every player has — 0 when real bids < copies.
+            let real_winners = bids.len().min(avail as usize);
+            let price = if bids.len() >= avail as usize {
+                bids[avail as usize - 1].price
+            } else {
+                0
+            };
+
             let card_name = self.cards[&card].name.clone();
             let best_bid = bids.first().map(|b| b.price);
             let mut sold = 0u32;
-            let mut cleared = None;
-            for b in &bids {
-                if sold >= avail {
-                    break;
-                }
-                // Bids were within the balance when placed, but same-close wins
-                // spend it down — never let a fill push a player into debt.
-                if b.price > self.players[&b.player].balance {
-                    continue;
-                }
-                self.adjust_balance(b.player, -b.price);
-                self.adjust_balance(HOUSE_ID, b.price);
-                self.house.remove_cards(card, 1);
-                self.give_cards(b.player, card, 1);
-                cleared = Some(b.price);
-                sold += 1;
+            let settle = |game: &mut Game, player: PlayerId, bid: Cents, trades: &mut Vec<Trade>| {
+                game.adjust_balance(player, -price);
+                game.adjust_balance(HOUSE_ID, price);
+                game.house.remove_cards(card, 1);
+                game.give_cards(player, card, 1);
                 trades.push(Trade {
                     card,
                     card_name: card_name.clone(),
-                    buyer: b.player,
-                    buyer_name: self.name_of(b.player),
+                    buyer: player,
+                    buyer_name: game.name_of(player),
                     seller: HOUSE_ID,
-                    seller_name: self.name_of(HOUSE_ID),
+                    seller_name: game.name_of(HOUSE_ID),
                     qty: 1,
-                    price: b.price,
-                    bid: b.price,
-                    offer: b.price,
+                    price,
+                    bid,
+                    offer: price,
                 });
+            };
+            let winners: Vec<LeagueBid> = bids.iter().take(real_winners).cloned().collect();
+            for b in &winners {
+                settle(self, b.player, b.price, &mut trades);
+                sold += 1;
             }
-            clears.push(CardClear { card, card_name, best_bid, best_offer: None, cleared, volume: sold });
+            // Copies beyond the real bids go to random non-bidders (their
+            // implicit 0 bids won), one per player, at the price of 0.
+            let leftover = avail - sold;
+            if leftover > 0 {
+                let bidders: std::collections::HashSet<PlayerId> =
+                    bids.iter().map(|b| b.player).collect();
+                let mut others: Vec<PlayerId> = self
+                    .player_order
+                    .iter()
+                    .copied()
+                    .filter(|p| !bidders.contains(p))
+                    .collect();
+                rng.shuffle(&mut others);
+                for &p in others.iter().take(leftover as usize) {
+                    settle(self, p, 0, &mut trades);
+                    sold += 1;
+                }
+            }
+            clears.push(CardClear { card, card_name: self.cards[&card].name.clone(), best_bid, best_offer: None, cleared: Some(price), volume: sold });
         }
 
         let result = RoundResult { round: self.round, trades, clears };
@@ -232,7 +281,7 @@ impl Game {
             return Err("too many cards in the list — reduce the quantities".into());
         }
         let mut by_name: HashMap<String, CardId> =
-            self.cards.values().map(|c| (c.name.clone(), c.id)).collect();
+            self.cards.values().map(|c| (c.name.to_lowercase(), c.id)).collect();
         let mut added = 0usize;
         for (pc, qty) in list {
             if qty == 0 {

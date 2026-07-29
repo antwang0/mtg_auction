@@ -98,7 +98,9 @@ function render() {
     (league ? tabBtn("auction") : tabBtn("market")).click();
   }
   $("order-forms").classList.toggle("hidden", league);
-  $("manual-inv").classList.toggle("hidden", !league || state.me == null);
+  // The league home is a lean summary — manual inventory tracking is retired
+  // (the API remains for anyone already using it).
+  $("manual-inv").classList.add("hidden");
   // League auction winnings are handed over in person — no delivery tracking.
   $("deliveries-block").classList.toggle("hidden", league);
 

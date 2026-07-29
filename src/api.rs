@@ -43,6 +43,10 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/reports/delete", post(delete_report))
         .route("/api/cards/add", post(add_cards))
         .route("/api/players/add", post(add_player))
+        .route("/api/players/remove", post(remove_player))
+        .route("/api/ladder/pairings", post(override_pairings))
+        .route("/api/tokens", get(get_tokens))
+        .route("/api/set-code", post(set_set_code))
         .route("/api/house/offer", post(offer_house))
         .route("/api/log", get(get_log))
         .route("/api/ladder", get(get_ladder))
@@ -52,6 +56,8 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/ladder/schedule", post(schedule_matches))
         .route("/api/ladder/report", post(report_result))
         .route("/api/ladder/cancel", post(cancel_match))
+        .route("/api/ladder/draw-unreported", post(draw_unreported))
+        .route("/api/ladder/delete", post(delete_match))
         .route("/api/league/bid", post(place_league_bid))
         .route("/api/league/bid/cancel", post(cancel_league_bid))
         .route("/api/league/open", post(open_league_auction))
@@ -367,9 +373,10 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Res
     let reports: Vec<Report> = if game.is_admin(&token) { game.reports.clone() } else { Vec::new() };
     let (my_committed, my_available) = match me {
         Some(id) if game.phase == Phase::League => {
-            // League bids commit real cash only (no debt allowed).
-            let committed = game.league_committed(id);
-            (committed, (game.players[&id].balance - committed).max(0))
+            // League bids are uncapped: any amount may rest across bids, and
+            // over-committed bids are amended down at the close. "Available"
+            // is therefore just the balance.
+            (game.league_committed(id), game.players[&id].balance)
         }
         Some(id) => {
             let committed = game.committed(id);
@@ -552,16 +559,185 @@ pub struct SetupResponse {
     players: Vec<PlayerToken>,
 }
 
+/// The match schedule and standings as machine-readable plain text (one
+/// tab-separated record per line, `#`-prefixed header/comment lines), for
+/// programmatic use — e.g. `curl /matches | cut -f2`.
+pub async fn matches_text(State(state): State<AppState>) -> impl axum::response::IntoResponse {
+    use std::fmt::Write;
+    let game = state.lock_game();
+    let league = game.is_league();
+    let mut out = String::new();
+    let _ = writeln!(out, "# generated {}", now_epoch());
+    let _ = writeln!(out, "# mode\t{}", if league { "league" } else { "standard" });
+    let _ = writeln!(out, "# standings");
+    let _ = writeln!(out, "# rank\tname\tpoints\telo\twins\tlosses\tdraws\tgame_wins\tgame_losses\tomw");
+    for s in game.standings() {
+        let _ = writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}",
+            s.rank, s.name, s.points, s.elo, s.wins, s.losses, s.draws, s.game_wins, s.game_losses, s.omw
+        );
+    }
+    let _ = writeln!(out, "# matches");
+    let _ = writeln!(out, "# id\tstatus\t{}\ta\tb\ta_wins\tb_wins\tdraws", if league { "play_by_epoch" } else { "slot_epoch" });
+    let mut ms: Vec<&Match> = game.ladder.matches.iter().collect();
+    ms.sort_by_key(|m| (m.slot_start, m.id));
+    for m in ms {
+        let status = match m.status {
+            MatchStatus::Scheduled => "scheduled",
+            MatchStatus::Completed => "completed",
+            MatchStatus::Cancelled => "cancelled",
+            MatchStatus::Expired => "unreported",
+        };
+        let _ = writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            m.id, status, m.slot_start, m.a_name, m.b_name, m.a_wins, m.b_wins, m.draws
+        );
+    }
+    ([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], out)
+}
+
+/// Case-insensitive player lookup by name.
+fn player_by_name(game: &Game, name: &str) -> Result<PlayerId, ApiError> {
+    let name = name.trim();
+    game.players
+        .values()
+        .find(|p| p.name.eq_ignore_ascii_case(name))
+        .map(|p| p.id)
+        .ok_or_else(|| format!("no player named \"{name}\"").into())
+}
+
+#[derive(Deserialize)]
+pub struct RemovePlayerRequest {
+    name: String,
+}
+
+/// Host: remove a player (holdings return to the house; upcoming matches are
+/// dropped and their opponents re-paired by the scheduler).
+pub async fn remove_player(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<RemovePlayerRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    let name = {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can remove players"));
+        }
+        let id = player_by_name(&game, &req.name)?;
+        let name = game.players[&id].name.clone();
+        game.remove_player(id)?;
+        game.auto_schedule(now_epoch()); // re-pair anyone their removal freed up
+        name
+    };
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "removed": name })))
+}
+
+#[derive(Deserialize)]
+pub struct PairingsRequest {
+    text: String,
+}
+
+/// Host: manually override pairings from a pasted text — one match per line,
+/// two player names separated by a comma, tab, " vs ", or (for single-word
+/// names) whitespace. Listed players' upcoming matches are replaced.
+pub async fn override_pairings(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<PairingsRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    let created = {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can set pairings"));
+        }
+        let mut pairs: Vec<(PlayerId, PlayerId)> = Vec::new();
+        for line in req.text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let two: Vec<&str> = if let Some((a, b)) = line.split_once(['\t', ',']) {
+                vec![a, b]
+            } else if let Some((a, b)) = line.split_once(" vs ") {
+                vec![a, b]
+            } else {
+                line.split_whitespace().collect()
+            };
+            if two.len() != 2 {
+                return Err(format!(
+                    "couldn't read the line \"{line}\" — use two names per line, separated by a comma (needed when names contain spaces)"
+                ).into());
+            }
+            pairs.push((player_by_name(&game, two[0])?, player_by_name(&game, two[1])?));
+        }
+        game.override_pairings(&pairs, now_epoch())?;
+        game.auto_schedule(now_epoch()); // re-pair any opponents the override freed
+        pairs.len()
+    };
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "created": created })))
+}
+
+#[derive(Deserialize)]
+pub struct SetCodeRequest {
+    set: String,
+}
+
+/// Host: change the Scryfall set code(s) that pin card-name lookups, mid-game
+/// (e.g. to add a companion set like a Mystical Archive). Re-adding a card
+/// afterwards refreshes its image and rarity from the right printing.
+pub async fn set_set_code(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<SetCodeRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can change the set code"));
+        }
+        let set = req.set.trim();
+        if set.len() > 60 {
+            return Err("set code list is too long".to_string().into());
+        }
+        game.config.set = if set.is_empty() { "sample".to_string() } else { set.to_string() };
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Host: every player's login token, for re-sharing lost magic links.
+pub async fn get_tokens(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<SetupResponse>, ApiError> {
+    let game = state.lock_game();
+    if !game.is_admin(&token_of(&headers)) {
+        return Err(ApiError::unauthorized("only the host can view login tokens"));
+    }
+    let players = game
+        .player_order
+        .iter()
+        .map(|&id| PlayerToken {
+            id,
+            name: game.players[&id].name.clone(),
+            token: game.tokens[&id].clone(),
+            admin: id == game.admin_id,
+        })
+        .collect();
+    Ok(Json(SetupResponse { players }))
+}
+
 pub async fn setup(State(state): State<AppState>, headers: HeaderMap, Json(mut config): Json<Config>) -> Result<Json<SetupResponse>, ApiError> {
-    // League games: fill any unset (0) schedule days from the current time and
-    // configured timezone — matchmaking this Sunday, first auction the next.
+    // League games: fill any unset (0) schedule days from the current time,
+    // aligning the auctions with the match rounds. Matchmaking opens
+    // immediately (each player's first N matches are assigned as soon as the
+    // game starts); an auction closes at the end of each round except the
+    // last, i.e. every N weeks, `rounds − 1` times.
     if config.mode == GameMode::League {
-        let (mm, first) = crate::engine::default_league_days(now_epoch(), config.league_tz_offset_mins);
+        let n = config.league_pending_per_player.clamp(1, 20) as i64;
         if config.league_matchmaking_start_day == 0 {
-            config.league_matchmaking_start_day = mm;
+            config.league_matchmaking_start_day =
+                crate::engine::league_day_of(now_epoch(), config.league_tz_offset_mins);
         }
         if config.league_first_auction_day == 0 {
-            config.league_first_auction_day = first;
+            config.league_first_auction_day = config.league_matchmaking_start_day + 7 * n;
+            // The derived schedule also sets the cadence and end to match the
+            // rounds (a host-supplied first-auction date leaves them alone).
+            config.league_period_weeks = n.clamp(1, 8) as u32;
+            if config.league_last_auction_day == 0 {
+                let auctions = config.league_rounds.saturating_sub(1).max(1) as i64;
+                config.league_last_auction_day =
+                    config.league_first_auction_day + (auctions - 1) * 7 * n;
+            }
         }
     }
     // A fresh server has no game and anyone may start the first one. Once a
@@ -588,11 +764,13 @@ pub async fn setup(State(state): State<AppState>, headers: HeaderMap, Json(mut c
             }
             scryfall::fetch_pool(&config.set).await?
         }
-        PoolSource::Manual => scryfall::fetch_decklist_pool(&config.card_list).await?,
+        PoolSource::Manual => scryfall::fetch_decklist_pool(&config.card_list, Some(&config.set)).await?,
         }
     };
     let mut game = Game::setup(config, pool)?;
     game.arm_timer(now_epoch());
+    // League: assign every player's first matches immediately.
+    game.auto_schedule(now_epoch());
     let players = game
         .player_order
         .iter()
@@ -865,13 +1043,14 @@ pub struct AddCardsRequest {
 /// the game has started.
 pub async fn add_cards(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<AddCardsRequest>) -> Result<Json<serde_json::Value>, ApiError> {
     // Authorize before the (slow) metadata fetch, and again before mutating.
-    {
+    let set = {
         let game = state.lock_game();
         if !game.is_admin(&token_of(&headers)) {
             return Err(ApiError::unauthorized("only the host can add cards"));
         }
-    }
-    let pool = scryfall::fetch_decklist_pool(&req.card_list).await?;
+        game.config.set.clone()
+    };
+    let pool = scryfall::fetch_decklist_pool(&req.card_list, Some(&set)).await?;
     let added = {
         let mut game = state.lock_game();
         if !game.is_admin(&token_of(&headers)) {
@@ -948,6 +1127,9 @@ pub struct LadderView {
     /// The request player's recurring weekly availability (weekly-slot indices).
     my_recurring: Vec<u32>,
     my_games_per_week: u32,
+    /// Whether this is a league game (deadline-based matches, swiss standings),
+    /// so match views can label times as play-by deadlines.
+    league: bool,
 }
 
 pub async fn get_ladder(State(state): State<AppState>, headers: HeaderMap) -> Json<LadderView> {
@@ -972,6 +1154,7 @@ pub async fn get_ladder(State(state): State<AppState>, headers: HeaderMap) -> Js
         my_availability,
         my_recurring,
         my_games_per_week,
+        league: game.is_league(),
     })
 }
 
@@ -1028,6 +1211,34 @@ pub async fn set_games_per_week(State(state): State<AppState>, headers: HeaderMa
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// Host: delete a match from the record entirely (reverting any applied ELO;
+/// swiss standings recompute from the remaining matches).
+pub async fn delete_match(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<MatchRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can delete matches"));
+        }
+        game.delete_match(req.match_id)?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Host: record every match whose play-by deadline has passed without a
+/// result as a 1-1 draw (league housekeeping, e.g. at the end of the season).
+pub async fn draw_unreported(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, ApiError> {
+    let recorded = {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can record unreported matches"));
+        }
+        game.record_unreported_as_draws(now_epoch())
+    };
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "recorded": recorded })))
+}
+
 /// Host-triggered scheduling pass (the timer also runs this automatically).
 pub async fn schedule_matches(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, ApiError> {
     let created = {
@@ -1035,7 +1246,6 @@ pub async fn schedule_matches(State(state): State<AppState>, headers: HeaderMap)
         if !game.is_admin(&token_of(&headers)) {
             return Err(ApiError::unauthorized("only the host can run the scheduler"));
         }
-        game.expire_stale_matches(now_epoch());
         game.auto_schedule(now_epoch())
     };
     state.save_and_notify().await;
@@ -1133,14 +1343,15 @@ pub struct InventoryAddRequest {
 /// inventory, for planning. Purely manual and optional.
 pub async fn inventory_add(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<InventoryAddRequest>) -> Result<Json<serde_json::Value>, ApiError> {
     // Authorize before the (slow) metadata fetch, and again before mutating.
-    {
+    let set = {
         let game = state.lock_game();
         require_player(&game, &headers)?;
         if game.phase != Phase::League {
             return Err("manual inventory edits are only for league games".to_string().into());
         }
-    }
-    let pool = scryfall::fetch_decklist_pool(&req.card_list).await?;
+        game.config.set.clone()
+    };
+    let pool = scryfall::fetch_decklist_pool(&req.card_list, Some(&set)).await?;
     let added = {
         let mut game = state.lock_game();
         let me = require_player(&game, &headers)?;

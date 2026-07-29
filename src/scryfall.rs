@@ -33,22 +33,46 @@ pub async fn fetch_pool(set: &str) -> Result<CardPool, String> {
 }
 
 /// Build a manual card pool from a decklist-style text, one `<qty> <name>` per
-/// line (e.g. `3 Lightning Bolt`). Card metadata (rarity, image, price, type) is
-/// fetched from Scryfall by name as a best effort — names Scryfall doesn't know
-/// (typos, custom cards) and an unreachable Scryfall both fall back to a plain
-/// card, so a manual pool always works, even offline.
-pub async fn fetch_decklist_pool(text: &str) -> Result<CardPool, String> {
+/// line (e.g. `3 Lightning Bolt`). Card metadata (rarity, image, price, type)
+/// is fetched from Scryfall by name. Individual names Scryfall doesn't know
+/// (typos, custom cards) fall back to a plain card, but an unreachable
+/// Scryfall is an error — silently creating a whole pool of bare, imageless
+/// cards is worse than asking the host to retry. (Re-adding a card later
+/// backfills any metadata a bare card is missing.)
+/// `set`: optional Scryfall set code(s) — comma/space-separated, tried in
+/// order — that pin lookups to those printings, so images and rarities match
+/// the set actually being played. Give companion codes too where a set splits
+/// its pool (e.g. `"sos soa"` for Secrets of Strixhaven + its Mystical
+/// Archive). Names in none of the sets fall back to a name-only lookup (any
+/// printing).
+pub async fn fetch_decklist_pool(text: &str, set: Option<&str>) -> Result<CardPool, String> {
     let entries = parse_decklist(text);
     if entries.is_empty() {
         return Err("no cards found in the list — use lines like `3 Lightning Bolt`".into());
     }
 
-    // Best-effort metadata, keyed by lowercased name.
+    // Metadata keyed by lowercased name; a transport-level failure aborts.
+    let codes: Vec<String> = set
+        .unwrap_or("")
+        .to_lowercase()
+        .split([',', ' '])
+        .map(str::trim)
+        .filter(|c| !c.is_empty() && *c != "sample")
+        .map(str::to_string)
+        .collect();
     let names: Vec<&str> = entries.iter().map(|(_, name)| name.as_str()).collect();
-    let meta = match build_client() {
-        Ok(client) => fetch_collection(&client, &names).await.unwrap_or_default(),
-        Err(_) => HashMap::new(),
-    };
+    let client = build_client()?;
+    let mut meta: HashMap<String, PoolCard> = HashMap::new();
+    for code in codes.iter().map(Some).chain([None]) {
+        let missing: Vec<&str> =
+            names.iter().copied().filter(|n| !meta.contains_key(&n.to_lowercase())).collect();
+        if missing.is_empty() {
+            break;
+        }
+        for (k, v) in fetch_collection(&client, &missing, code.map(String::as_str)).await? {
+            meta.entry(k).or_insert(v);
+        }
+    }
 
     let exact: Vec<(PoolCard, u32)> = entries
         .into_iter()
@@ -100,10 +124,17 @@ pub fn parse_decklist(text: &str) -> Vec<(u32, String)> {
 /// Look up card metadata by exact name via Scryfall's batch `/cards/collection`
 /// endpoint (≤75 identifiers per request). Returns a map keyed by lowercased
 /// canonical name; names Scryfall doesn't recognise are simply absent.
-async fn fetch_collection(client: &reqwest::Client, names: &[&str]) -> Result<HashMap<String, PoolCard>, String> {
+async fn fetch_collection(
+    client: &reqwest::Client,
+    names: &[&str],
+    set: Option<&str>,
+) -> Result<HashMap<String, PoolCard>, String> {
     #[derive(Serialize)]
     struct Identifier<'a> {
         name: &'a str,
+        /// Pins the lookup to one set's printing when given.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        set: Option<&'a str>,
     }
     #[derive(Serialize)]
     struct CollectionBody<'a> {
@@ -122,7 +153,7 @@ async fn fetch_collection(client: &reqwest::Client, names: &[&str]) -> Result<Ha
         // face name. Look each card up by its front-face name; single-face names
         // are unchanged.
         let body = CollectionBody {
-            identifiers: chunk.iter().map(|&name| Identifier { name: front_face_name(name) }).collect(),
+            identifiers: chunk.iter().map(|&name| Identifier { name: front_face_name(name), set }).collect(),
         };
         let resp = client
             .post("https://api.scryfall.com/cards/collection")

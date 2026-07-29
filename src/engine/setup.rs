@@ -62,6 +62,12 @@ impl Game {
             if config.league_packs_per_player > 1_000 {
                 return Err("too many packs per player (max 1000)".into());
             }
+            if !(1..=20).contains(&config.league_pending_per_player) {
+                return Err("matches in flight per player must be between 1 and 20".into());
+            }
+            if !(1..=20).contains(&config.league_rounds) {
+                return Err("the league must run between 1 and 20 rounds".into());
+            }
         }
         if config.debt_limit < 0 {
             return Err("debt limit cannot be negative".into());
@@ -70,8 +76,8 @@ impl Game {
             return Err("starting money cannot be negative".into());
         }
         // Upper bounds so absurd configs can't exhaust memory or overflow money.
-        if config.player_names.len() > 64 {
-            return Err("too many players (max 64)".into());
+        if config.player_names.len() > 200 {
+            return Err("too many players (max 200)".into());
         }
         if config.primary_rounds > 10_000 || config.secondary_rounds > 10_000 {
             return Err("too many rounds (max 10000 per phase)".into());
@@ -241,14 +247,52 @@ impl Game {
 
     // ---- mid-game additions -------------------------------------------------
 
-    /// Intern a pool card into the catalog by name, returning its id (creating a
-    /// new `Card` if the name is new). Keeps the display order sorted by name.
+    /// Intern a pool card into the catalog by name (case-insensitively),
+    /// returning its id (creating a new `Card` if the name is new). Keeps the
+    /// display order sorted by name.
     ///
-    /// `by_name` is a name→id index over the existing catalog, consulted and
-    /// updated in place so a whole batch interns in O(n) rather than rescanning
-    /// the catalog (and re-sorting `card_order`) per card.
+    /// `by_name` is a *lowercased* name→id index over the existing catalog,
+    /// consulted and updated in place so a whole batch interns in O(n) rather
+    /// than rescanning the catalog (and re-sorting `card_order`) per card.
+    ///
+    /// A match backfills metadata the stored card is missing: an add made while
+    /// Scryfall was unreachable leaves a bare card (typed-case name, no image
+    /// or prices), and re-adding the card once the lookup works heals it.
     pub(super) fn intern_card(&mut self, pc: &PoolCard, by_name: &mut HashMap<String, CardId>) -> CardId {
-        if let Some(&id) = by_name.get(&pc.name) {
+        if let Some(&id) = by_name.get(&pc.name.to_lowercase()) {
+            let mut renamed = false;
+            {
+                let c = self.cards.get_mut(&id).expect("by_name indexes the catalog");
+                if pc.type_line.is_some() {
+                    // A fetched card (it has a type line) is authoritative:
+                    // refresh the metadata, so re-adding a card after fixing
+                    // the set code corrects a wrong printing's image/rarity.
+                    c.rarity = pc.rarity;
+                    c.type_line = pc.type_line.clone();
+                    if pc.image.is_some() { c.image = pc.image.clone(); }
+                    if pc.ref_price.is_some() { c.ref_price = pc.ref_price; }
+                    if pc.cmc.is_some() { c.cmc = pc.cmc; }
+                    if pc.mana_cost.is_some() { c.mana_cost = pc.mana_cost.clone(); }
+                    if !pc.colors.is_empty() { c.colors = pc.colors.clone(); }
+                    if !pc.color_identity.is_empty() { c.color_identity = pc.color_identity.clone(); }
+                    if c.name != pc.name {
+                        c.name = pc.name.clone(); // adopt canonical casing
+                        renamed = true;
+                    }
+                } else {
+                    // A bare fallback card (metadata lookup missed) only fills
+                    // blanks — it never downgrades fetched data.
+                    if c.image.is_none() { c.image = pc.image.clone(); }
+                    if c.ref_price.is_none() { c.ref_price = pc.ref_price; }
+                }
+            }
+            if renamed {
+                // Renaming can move the card in the name-sorted display order.
+                let mut ord = std::mem::take(&mut self.card_order);
+                let cards = &self.cards;
+                ord.sort_by(|x, y| cards[x].name.cmp(&cards[y].name));
+                self.card_order = ord;
+            }
             return id;
         }
         // Cards are never removed, so ids stay dense (1..=len) and the next id is
@@ -270,7 +314,7 @@ impl Game {
         // instead of re-sorting the whole vector on every add.
         let pos = self.card_order.partition_point(|c| self.cards[c].name <= pc.name);
         self.card_order.insert(pos, id);
-        by_name.insert(pc.name.clone(), id);
+        by_name.insert(pc.name.to_lowercase(), id);
         id
     }
 
@@ -288,10 +332,10 @@ impl Game {
         if total > 100_000 {
             return Err("too many cards in the list — reduce the quantities".into());
         }
-        // Build a name→id index over the current catalog once, then intern the
-        // whole batch against it (kept up to date as new names are added).
+        // Build a (lowercased) name→id index over the current catalog once, then
+        // intern the whole batch against it (kept up to date as names are added).
         let mut by_name: HashMap<String, CardId> =
-            self.cards.values().map(|c| (c.name.clone(), c.id)).collect();
+            self.cards.values().map(|c| (c.name.to_lowercase(), c.id)).collect();
         let mut added = 0usize;
         for (pc, qty) in list {
             if qty == 0 {
@@ -318,8 +362,8 @@ impl Game {
         if self.players.values().any(|p| p.name.eq_ignore_ascii_case(&name)) {
             return Err("a player with that name already exists".into());
         }
-        if self.players.len() >= 64 {
-            return Err("too many players (max 64)".into());
+        if self.players.len() >= 200 {
+            return Err("too many players (max 200)".into());
         }
         let id = self.player_order.iter().copied().max().unwrap_or(0) + 1;
         self.players.insert(id, Player {
@@ -334,6 +378,41 @@ impl Game {
         self.tokens.insert(id, token);
         self.allocate_from_house(id);
         Ok(id)
+    }
+
+    /// Remove a player from the game. Their holdings return to the house, the
+    /// balance leaves the economy, resting bids/offers are withdrawn, and
+    /// their *upcoming* matches are removed (freed opponents get re-paired by
+    /// the scheduler). Completed and cancelled matches keep their recorded
+    /// name. The host cannot be removed, nor can a player with pending
+    /// deliveries (settle or reverse those first).
+    pub fn remove_player(&mut self, id: PlayerId) -> Result<(), String> {
+        if id == self.admin_id {
+            return Err("the host can't be removed".into());
+        }
+        if !self.players.contains_key(&id) {
+            return Err("no such player".into());
+        }
+        if self.deliveries.iter().any(|d| {
+            d.status == DeliveryStatus::Pending && (d.buyer == id || d.seller == id)
+        }) {
+            return Err("that player has pending deliveries — settle or reverse them first".into());
+        }
+        let p = self.players.remove(&id).expect("presence checked above");
+        for (card, qty) in p.holdings {
+            self.house.add_cards(card, qty);
+        }
+        self.player_order.retain(|&x| x != id);
+        self.tokens.remove(&id);
+        self.passwords.remove(&id);
+        self.league_bids.retain(|b| b.player != id);
+        self.bids.retain(|k, _| k.0 != id);
+        self.offers.retain(|k, _| k.0 != id);
+        self.ladder.availability.remove(&id);
+        self.ladder.recurring.remove(&id);
+        self.ladder.games_per_week.remove(&id);
+        self.ladder.matches.retain(|m| !(m.involves(id) && m.status == MatchStatus::Scheduled));
+        Ok(())
     }
 
     /// Move a player's initial per-rarity allocation out of the house to them

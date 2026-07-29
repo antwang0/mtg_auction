@@ -13,28 +13,41 @@ function renderLeague() {
   $("lg-status").textContent = state.league_ended
     ? `— the league's last auction has closed`
     : open
-    ? `— week ${state.round} · closes ${fmtLeagueTime(state.round_deadline, tz)}`
+    ? `— auction ${state.round} · closes ${fmtLeagueTime(state.round_deadline, tz)}`
     : state.league_next_close
     ? `— closed · next auction ${fmtLeagueTime(state.league_next_close, tz)} once the host stocks the pool`
     : `— closed · the host opens the next one by stocking the pool`;
 
+  $("lg-summary").title =
+    "Committed is the sum of your resting bids — it may exceed your balance. Winners pay the clearing price, and any bid above your remaining balance is trimmed to it when its card resolves.";
   $("lg-summary").textContent = loggedIn
-    ? `Committed ${fmtUSD(state.my_committed)} · Available to bid ${fmtUSD(state.my_available)} · stipend ${fmtUSD(state.weekly_stipend)} after each close`
+    ? `Committed ${fmtUSD(state.my_committed)} · Balance ${fmtUSD(state.my_available)} · stipend ${fmtUSD(state.weekly_stipend)} after each close. One bid per card; winners all pay the card's clearing price, and bids over your remaining balance are trimmed to it as cards resolve (rarest first).`
     : "Log in to bid.";
 
   renderLeagueMyBids();
   renderLeaguePool();
 }
 
+// Auction resolution order: rarest first (RARITY_RANK, from app-market.js,
+// ranks common lowest), then name.
+function resolutionCmp(a, b) {
+  const ra = RARITY_RANK[a.rarity] ?? -9, rb = RARITY_RANK[b.rarity] ?? -9;
+  return rb - ra || a.name.localeCompare(b.name);
+}
+
 function renderLeagueMyBids() {
   const box = $("lg-mybids");
-  const bids = state.my_league_bids || [];
+  // Shown in resolution order — the order the close spends your balance, so
+  // it reads top-to-bottom as "what happens to my money".
+  const bids = (state.my_league_bids || [])
+    .map((b) => ({ ...b, card_info: cardById[b.card] || { rarity: "", name: b.name } }))
+    .sort((x, y) => resolutionCmp(x.card_info, y.card_info));
   if (state.me == null || !bids.length) { box.innerHTML = ""; return; }
   box.innerHTML =
-    `<h3>Your bids <span class="muted">— each wins at most one copy</span></h3>` +
+    `<h3>Your bids <span class="muted">— in resolution order; each wins at most one copy</span></h3>` +
     `<table class="grid mini"><tbody>` +
     bids.map((b) =>
-      `<tr><td>${esc(b.name)}</td><td class="num">@${fmtUSD(b.price)}</td>` +
+      `<tr><td><span class="${rarityClass(b.card_info.rarity)}">●</span> ${esc(b.name)}</td><td class="num">@${fmtUSD(b.price)}</td>` +
       `<td><button class="linkbtn lg-cancel" data-id="${b.id}">cancel</button></td></tr>`
     ).join("") +
     `</tbody></table>`;
@@ -53,9 +66,25 @@ function renderLeaguePool() {
   const myBids = {};
   (state.my_league_bids || []).forEach((b) => (myBids[b.card] = myBids[b.card] || []).push(b));
 
-  pool.forEach((h) => {
-    const c = cardById[h.card];
-    if (!c) return;
+  // Sort the grid by the selected method (default: auction resolution order).
+  const mode = $("lg-sort") ? $("lg-sort").value : "resolution";
+  const items = pool
+    .map((h) => ({ h, c: cardById[h.card] }))
+    .filter((x) => x.c)
+    .sort((x, y) => {
+      switch (mode) {
+        case "name": return x.c.name.localeCompare(y.c.name);
+        case "price": return (y.c.ref_price || 0) - (x.c.ref_price || 0) || x.c.name.localeCompare(y.c.name);
+        case "mv": return (x.c.cmc || 0) - (y.c.cmc || 0) || x.c.name.localeCompare(y.c.name);
+        case "mybid": {
+          const bx = myBids[x.c.id] ? 0 : 1, by = myBids[y.c.id] ? 0 : 1;
+          return bx - by || resolutionCmp(x.c, y.c);
+        }
+        default: return resolutionCmp(x.c, y.c);
+      }
+    });
+
+  items.forEach(({ h, c }) => {
     const tile = document.createElement("div");
     tile.className = "tile lg-tile";
     const art = c.image
@@ -77,6 +106,9 @@ function renderLeaguePool() {
     g.appendChild(tile);
   });
 }
+
+// Re-sort the grid immediately when the sort method changes.
+$("lg-sort").addEventListener("change", renderLeaguePool);
 
 // Delegated auction actions: place a bid on a pool card, cancel a resting bid.
 $("tab-auction").addEventListener("click", async (e) => {

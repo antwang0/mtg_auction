@@ -316,10 +316,9 @@ pub async fn timer_loop(state: AppState) {
                 game.arm_timer(now_epoch());
             }
             let ladder_changed = if tick.is_multiple_of(LADDER_TICK_SECS) {
-                let expired = game.expire_stale_matches(now_epoch());
                 let scheduled = game.auto_schedule(now_epoch());
                 let reversed = game.expire_overdue_deliveries(now_epoch());
-                expired > 0 || scheduled > 0 || reversed > 0
+                scheduled > 0 || reversed > 0
             } else {
                 false
             };

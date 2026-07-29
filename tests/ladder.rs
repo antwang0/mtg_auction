@@ -213,38 +213,36 @@ fn availability_input_is_capped() {
 }
 
 #[test]
-fn stale_matches_expire_as_no_shows() {
+fn unreported_matches_never_expire_and_can_be_reported_late() {
     let mut g = game(&["A", "B"]);
     prefs(&mut g, &[1, 2], 1, &[slot(1, 0)]);
     g.auto_schedule(NOW);
     assert_eq!(g.ladder.matches.len(), 1);
+    let id = g.ladder.matches[0].id;
     let start = g.ladder.matches[0].slot_start;
 
-    // Before the grace period passes, it stays scheduled.
-    assert_eq!(g.expire_stale_matches(start + 3600), 0);
+    // Long after the slot has passed, the match is still open for reporting
+    // (there is no no-show expiry) and no ELO has been applied.
+    g.auto_schedule(start + 30 * 86_400);
     assert_eq!(g.ladder.matches[0].status, MatchStatus::Scheduled);
-
-    // A day past the slot, it's a no-show: expired, no ELO change.
-    assert_eq!(g.expire_stale_matches(start + 2 * 86_400), 1);
-    assert_eq!(g.ladder.matches[0].status, MatchStatus::Expired);
     assert_eq!(g.players[&1].elo, 1200);
     assert_eq!(g.players[&2].elo, 1200);
-    assert_eq!(g.standings().iter().find(|s| s.player == 1).unwrap().scheduled, 0);
 
-    // Expired matches free the weekly quota, so the pair can be rescheduled.
-    assert_eq!(g.auto_schedule(NOW), 1);
+    // A result can be added at any later time.
+    let a = g.ladder.matches[0].a;
+    g.submit_match_result(a, id, 2, 0, 0).unwrap();
+    assert_eq!(g.ladder.matches[0].status, MatchStatus::Completed);
+    assert_eq!(g.players[&a].elo, 1216);
 }
 
 #[test]
-fn host_can_record_an_expired_match_and_correct_a_completed_one() {
+fn host_can_record_an_unreported_match_and_correct_a_completed_one() {
     let mut g = game(&["A", "B"]);
     prefs(&mut g, &[1, 2], 1, &[slot(1, 0)]);
     g.auto_schedule(NOW);
     let id = g.ladder.matches[0].id;
     let (a, b) = (g.ladder.matches[0].a, g.ladder.matches[0].b);
-    let start = g.ladder.matches[0].slot_start;
-    g.expire_stale_matches(start + 2 * 86_400);
-    // Host resolves the no-show retroactively (seat A wins 2–0).
+    // Host resolves the unreported match retroactively (seat A wins 2–0).
     g.force_match_result(id, 2, 0, 0).unwrap();
     assert_eq!(g.ladder.matches[0].status, MatchStatus::Completed);
     assert_eq!(g.players[&a].elo, 1216);

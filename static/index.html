@@ -21,7 +21,6 @@
       <button id="btn-login" class="ghost">Token</button>
       <button id="btn-setpw" class="ghost hidden">Set password</button>
       <button id="btn-logout" class="ghost hidden">Log out</button>
-      <a class="navlink" href="/matches">Matches</a>
       <a class="navlink hidden" id="admin-link" href="/admin">Admin →</a>
     </div>
   </header>
@@ -46,7 +45,7 @@
       <div id="tab-home" class="tabpane">
         <div class="columns">
           <section class="card">
-            <h2>Your Cards</h2>
+            <h2 id="home-cards-title">Your Cards</h2>
             <div id="home-cards"></div>
 
             <!-- League mode: manually track the cards from your physical packs. -->
@@ -59,7 +58,7 @@
               <span id="inv-msg" class="muted"></span>
             </div>
           </section>
-          <section class="card">
+          <section class="card" id="home-orders-sec">
             <h2>Your Orders</h2>
             <div id="home-orders"></div>
           </section>
@@ -248,10 +247,21 @@
       <div id="tab-auction" class="tabpane hidden">
         <section class="card">
           <h2>Weekly Auction <span id="lg-status" class="muted"></span></h2>
-          <p class="muted">Sealed bids: for each card, the top bids win one copy each (as many as are available) and pay what they bid. Ties are broken randomly. You can place several bids on the same card at different prices — each competes for one copy. Bids can't exceed your balance.</p>
+          <p class="muted">Sealed bids: cards resolve rarest first, then alphabetically, and everyone automatically bids $0 on every card. For a card with N copies, all copies trade at one price — the Nth-highest bid, which is $0 whenever fewer than N real bids exist. Real bidders win copies first; leftover copies are handed to random non-bidders for free. Ties are broken randomly. One bid per card; re-bidding replaces your earlier bid. A single bid can't exceed your balance, but there's no cap on your total bids — as you win and spend, your remaining bids are trimmed down to your remaining balance.</p>
           <div id="lg-summary" class="funds muted"></div>
           <div id="lg-error" class="error"></div>
           <div id="lg-mybids"></div>
+          <div class="order-row">
+            <label class="muted">Sort
+              <select id="lg-sort">
+                <option value="resolution" selected>Resolution order (rarest first)</option>
+                <option value="name">Name</option>
+                <option value="price">Ref price (high → low)</option>
+                <option value="mv">Mana value</option>
+                <option value="mybid">Your bids first</option>
+              </select>
+            </label>
+          </div>
           <div id="lg-pool" class="gallery"></div>
         </section>
       </div>
@@ -261,23 +271,26 @@
         <div class="columns">
           <section class="card">
             <h2>Your Ladder</h2>
-            <div class="gpw-row">
-              <label>Games per week
-                <input id="l-gpw" type="number" min="0" value="1" />
-              </label>
-              <span id="l-gpw-max" class="muted"></span>
-              <button id="l-gpw-save" class="ghost">save</button>
+            <div id="l-prefs" class="lg-hide">
+              <div class="gpw-row">
+                <label>Games per week
+                  <input id="l-gpw" type="number" min="0" value="1" />
+                </label>
+                <span id="l-gpw-max" class="muted"></span>
+                <button id="l-gpw-save" class="ghost">save</button>
+              </div>
+
+              <h3>Weekly Availability <span class="muted">— set once; applies every week</span></h3>
+              <div id="l-recurring" class="calwrap"></div>
+              <button id="l-recurring-save" class="primary">Save weekly pattern</button>
+              <span id="l-recurring-msg" class="muted"></span>
+
+              <h3>One-off Availability <span class="muted">— extra times for specific dates (your local time). ◇ = already covered by your weekly pattern.</span></h3>
+              <div id="l-calendar" class="calwrap"></div>
+              <button id="l-avail-save" class="primary">Save one-off availability</button>
+              <span id="l-prefs-msg" class="muted"></span>
             </div>
-
-            <h3>Weekly Availability <span class="muted">— set once; applies every week</span></h3>
-            <div id="l-recurring" class="calwrap"></div>
-            <button id="l-recurring-save" class="primary">Save weekly pattern</button>
-            <span id="l-recurring-msg" class="muted"></span>
-
-            <h3>One-off Availability <span class="muted">— extra times for specific dates (your local time). ◇ = already covered by your weekly pattern.</span></h3>
-            <div id="l-calendar" class="calwrap"></div>
-            <button id="l-avail-save" class="primary">Save one-off availability</button>
-            <span id="l-prefs-msg" class="muted"></span>
+            <p id="l-league-note" class="muted" hidden>Matches are assigned automatically in rounds — arrange a time with each opponent and play before the round's deadline. The next round's matches post when the deadline passes.</p>
 
             <h3>Your Matches</h3>
             <div id="l-mymatches"></div>

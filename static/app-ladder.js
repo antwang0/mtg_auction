@@ -35,24 +35,40 @@ function localTimeLabel(epoch) {
 
 function renderLadder() {
   if (!ladder) return;
+  const isLeagueGame = state && state.mode === "league";
 
-  // Weekly target (don't clobber the field while the user is editing it).
-  const gpw = $("l-gpw");
-  if (gpw && document.activeElement !== gpw) gpw.value = ladder.my_games_per_week || 0;
-  if (gpw) gpw.max = ladder.max_games_per_week;
-  $("l-gpw-max").textContent = `/ ${ladder.max_games_per_week} max`;
+  // League matches are assigned with deadlines — no availability, weekly
+  // targets, or calendar slots to manage.
+  $("l-prefs").hidden = isLeagueGame;
+  $("l-league-note").hidden = !isLeagueGame;
+  if (!isLeagueGame) {
+    // Weekly target (don't clobber the field while the user is editing it).
+    const gpw = $("l-gpw");
+    if (gpw && document.activeElement !== gpw) gpw.value = ladder.my_games_per_week || 0;
+    if (gpw) gpw.max = ladder.max_games_per_week;
+    $("l-gpw-max").textContent = `/ ${ladder.max_games_per_week} max`;
 
-  // Availability: re-sync from the server unless there are unsaved edits.
-  if (!availDirty) availSet = new Set(ladder.my_availability || []);
-  if (!recurDirty) recurSet = new Set(ladder.my_recurring || []);
-  renderRecurringGrid();
-  renderCalendar("l-calendar", { editable: true });
+    // Availability: re-sync from the server unless there are unsaved edits.
+    if (!availDirty) availSet = new Set(ladder.my_availability || []);
+    if (!recurDirty) recurSet = new Set(ladder.my_recurring || []);
+    renderRecurringGrid();
+    renderCalendar("l-calendar", { editable: true });
+  }
   renderMyMatches();
   renderAllMatches();
   renderMonthCalendar(); // the Calendar tab's month grid depends on ladder data
   renderTodo();          // the schedule section depends on ladder data
 
-  // ELO standings.
+  // Standings (league games rank by swiss points; standard games by ELO —
+  // the server sends them pre-sorted either way).
+  const league = state && state.mode === "league";
+  $("t-standings").querySelector("thead tr").innerHTML =
+    `<th>#</th><th>Player</th>` +
+    (league ? `<th class="num" title="3 per match win, 1 per draw">Pts</th>` : `<th class="num">ELO</th>`) +
+    `<th class="num">W-L-D</th>` +
+    (league ? `<th class="num" title="opponents' match-win % (strength of schedule)">OMW%</th>` : "") +
+    (league ? `<th class="num" title="individual games won-lost">Games</th>` : "") +
+    `<th class="num" title="upcoming matches">Sched</th>`;
   const tb = $("t-standings").querySelector("tbody");
   tb.innerHTML = "";
   (ladder.standings || []).forEach((s) => {
@@ -60,7 +76,10 @@ function renderLadder() {
     if (state && s.player === state.me) tr.className = "mine";
     tr.innerHTML =
       `<td>${s.rank}</td><td>${esc(s.name)}${state && s.player === state.me ? " ★" : ""}</td>` +
-      `<td class="num">${s.elo}</td><td class="num">${s.wins}-${s.losses}-${s.draws}</td><td class="num">${s.scheduled}</td>`;
+      `<td class="num">${league ? s.points : s.elo}</td><td class="num">${s.wins}-${s.losses}-${s.draws}</td>` +
+      (league ? `<td class="num">${(s.omw * 100).toFixed(1)}</td>` : "") +
+      (league ? `<td class="num">${s.game_wins}-${s.game_losses}</td>` : "") +
+      `<td class="num">${s.scheduled}</td>`;
     tb.appendChild(tr);
   });
 }
@@ -279,6 +298,8 @@ function renderMyMatches() {
   const mine = (ladder.matches || []).filter((m) => m.a === me || m.b === me).sort((x, y) => x.slot_start - y.slot_start);
   box.innerHTML = mine.length
     ? mine.map((m) => matchCard(m, me)).join("")
+    : state && state.mode === "league"
+    ? `<p class="muted">No matches yet — they're assigned automatically once matchmaking opens.</p>`
     : `<p class="muted">No matches yet. Set your availability and games per week, and the system will schedule them.</p>`;
 }
 
@@ -286,32 +307,48 @@ function matchCard(m, me) {
   const iAmA = m.a === me;
   const opp = iAmA ? m.b_name : m.a_name;
   const myW = iAmA ? m.a_wins : m.b_wins, oppW = iAmA ? m.b_wins : m.a_wins;
-  const head = `<div class="matchhead"><b>vs ${esc(opp)}</b> <span class="muted">${fmtSlot(m.slot_start)}</span></div>`;
+  // League matches carry a play-by deadline rather than a scheduled time.
+  const when = state && state.mode === "league"
+    ? (m.status === "scheduled" ? `play by ${fmtSlot(m.slot_start)}` : localDayLabel(m.slot_start))
+    : fmtSlot(m.slot_start);
+  const head = `<div class="matchhead"><b>vs ${esc(opp)}</b> <span class="muted">${when}</span></div>`;
 
   if (m.status === "completed") {
-    const delta = iAmA ? m.a_delta : m.b_delta;
-    const verdict = myW > oppW ? "you won" : myW < oppW ? `${esc(opp)} won` : "draw";
-    return `<div class="matchcard">${head}<span class="muted">${verdict} · ELO ${delta >= 0 ? "+" : ""}${delta}</span></div>`;
+    const verdict = myW > oppW ? `you won ${myW}-${oppW}` : myW < oppW ? `${esc(opp)} won ${oppW}-${myW}` : "draw";
+    // League scores swiss match points (3 win / 1 draw); standard games ELO.
+    const score = state && state.mode === "league"
+      ? `+${myW > oppW ? 3 : myW === oppW ? 1 : 0} pts`
+      : (() => { const d = iAmA ? m.a_delta : m.b_delta; return `ELO ${d >= 0 ? "+" : ""}${d}`; })();
+    return `<div class="matchcard">${head}<span class="muted">${verdict} · ${score}</span></div>`;
   }
   if (m.status === "cancelled") {
     const byMe = m.cancelled_by === me;
     const delta = iAmA ? m.a_delta : m.b_delta;
     return `<div class="matchcard">${head}<span class="muted">cancelled ${byMe ? `by you (ELO ${delta})` : "by opponent"}</span></div>`;
   }
-  if (m.status === "expired") {
-    return `<div class="matchcard">${head}<span class="muted">expired — no result was reported in time</span></div>`;
-  }
-
-  // Scheduled: click who won — it's final immediately (either player can enter it).
-  const me_aw = iAmA ? 1 : 0, me_bw = iAmA ? 0 : 1; // "I won" in seat order
-  const form =
-    `<div class="report-row winrow">` +
-    `<button class="buy lm-win" data-mid="${m.id}" data-aw="${me_aw}" data-bw="${me_bw}" data-dw="0" data-who="You">You won</button>` +
-    `<button class="buy lm-win" data-mid="${m.id}" data-aw="${me_bw}" data-bw="${me_aw}" data-dw="0" data-who="${esc(opp)}">${esc(opp)} won</button>` +
-    `<button class="ghost lm-win" data-mid="${m.id}" data-aw="0" data-bw="0" data-dw="1" data-who="draw">Draw</button>` +
-    `</div>`;
-  const note = `<div class="muted">Click who won — it's final once you report (either player can enter it).</div>`;
-  return `<div class="matchcard">${head}${note}${form}<div class="actrow"><button class="sell lm-cancel" data-mid="${m.id}">Cancel</button></div></div>`;
+  // Scheduled (or a legacy "expired" no-show): click the result — it's final
+  // immediately (either player can enter it), and can be added any time after
+  // the match was played.
+  const league = state && state.mode === "league";
+  const winBtn = (aw, bw, dw, cls, label) =>
+    `<button class="${cls} lm-win" data-mid="${m.id}" data-aw="${aw}" data-bw="${bw}" data-dw="${dw}" data-who="${esc(label)}">${esc(label)}</button>`;
+  const form = league
+    ? `<div class="report-row winrow">` +
+      winBtn(iAmA ? 2 : 0, iAmA ? 0 : 2, 0, "buy", "You won 2-0") +
+      winBtn(iAmA ? 2 : 1, iAmA ? 1 : 2, 0, "buy", "You won 2-1") +
+      winBtn(iAmA ? 1 : 2, iAmA ? 2 : 1, 0, "sell", `${opp} won 2-1`) +
+      winBtn(iAmA ? 0 : 2, iAmA ? 2 : 0, 0, "sell", `${opp} won 2-0`) +
+      winBtn(1, 1, 1, "ghost", "Draw") +
+      `</div>`
+    : `<div class="report-row winrow">` +
+      winBtn(iAmA ? 1 : 0, iAmA ? 0 : 1, 0, "buy", "You won") +
+      winBtn(iAmA ? 0 : 1, iAmA ? 1 : 0, 0, "buy", `${opp} won`) +
+      winBtn(0, 0, 1, "ghost", "Draw") +
+      `</div>`;
+  const note = `<div class="muted">Click the result — it's final once you report (either player can enter it${league ? "; best of three, and a 2-0 counts for more than a 2-1" : ""}).</div>`;
+  // League matches can't be cancelled — they're played or they count as ties.
+  const cancel = league || m.status === "expired" ? "" : `<div class="actrow"><button class="sell lm-cancel" data-mid="${m.id}">Cancel</button></div>`;
+  return `<div class="matchcard">${head}${note}${form}${cancel}</div>`;
 }
 
 // All matches (read-only overview).
@@ -319,13 +356,14 @@ function renderAllMatches() {
   const box = $("l-allmatches");
   const ms = (ladder.matches || []).slice().sort((a, b) => a.slot_start - b.slot_start);
   if (!ms.length) { box.innerHTML = `<p class="muted">No matches scheduled yet.</p>`; return; }
+  const lg = state && state.mode === "league";
   box.innerHTML =
-    `<table class="grid"><thead><tr><th>When</th><th>Match</th><th class="num">Result</th></tr></thead><tbody>` +
+    `<table class="grid"><thead><tr><th>${lg ? "Play by" : "When"}</th><th>Match</th><th class="num">Result</th></tr></thead><tbody>` +
     ms.map((m) => {
       const mine = state && (m.a === state.me || m.b === state.me) ? ' class="mine"' : "";
       const res = m.status === "completed" ? esc(matchResult(m))
         : m.status === "cancelled" ? `<span class="muted">cancelled</span>`
-          : m.status === "expired" ? `<span class="muted">expired</span>`
+          : m.status === "expired" ? `<span class="muted">unreported</span>`
             : `<span class="muted">scheduled</span>`;
       return `<tr${mine}><td>${fmtSlot(m.slot_start)}</td><td>${esc(m.a_name)} <span class="muted">vs</span> ${esc(m.b_name)}</td><td class="num">${res}</td></tr>`;
     }).join("") + `</tbody></table>`;
