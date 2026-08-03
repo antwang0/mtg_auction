@@ -246,10 +246,13 @@ fn league_matches_are_best_of_three_and_scheduled_in_swiss_batches() {
     let round2 = now + 8 * 86_400; // past round 1's close
     assert_eq!(g.auto_schedule(round2), 2, "round 2 assigns together after the close");
 
-    // Standings rank by swiss points, and a 2-0 win outranks a 2-1 win.
+    // Standings rank by points (3 per win), and a 2-0 win outranks a 2-1 win.
+    // The 2-1 loser earns 1 point for the game taken; the 2-0 loser earns 0.
     let s = g.standings();
     assert_eq!(s[0].points, 3);
     assert_eq!(s[1].points, 3);
+    assert_eq!(s[2].points, 1);
+    assert_eq!(s[3].points, 0);
     assert!(s[0].game_wins - s[0].game_losses > s[1].game_wins - s[1].game_losses);
     assert_eq!((s[0].game_wins, s[0].game_losses), (2, 0));
 }

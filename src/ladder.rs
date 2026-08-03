@@ -7,8 +7,9 @@
 //!
 //! League games run deadline-based swiss instead: matches are *assigned* (no
 //! availability or slots), each with a play-by deadline; pairing prefers equal
-//! swiss records; standings rank by match points, then opponents' match-win
-//! percentage, then game difference. Cancelling is not allowed.
+//! swiss records; standings rank by points (3 per match win, 1 for taking a
+//! game without winning), then opponents' match-win percentage, then game
+//! difference. Cancelling is not allowed.
 
 use crate::engine::Game;
 use crate::model::*;
@@ -129,17 +130,18 @@ type PairKey = (u32, u32, i64, i64, u32, u32, PlayerId, PlayerId);
 impl Game {
 
     /// Whether a match has been played (its slot has started) but has no final
-    /// result yet. Such matches count as ties for matchmaking until the real
-    /// result is added, which can happen at any later time.
+    /// result yet. Such matches count as 1-1 ties for matchmaking until the
+    /// real result is added, which can happen at any later time.
     fn is_unreported(m: &Match, now_epoch: u64) -> bool {
         matches!(m.status, MatchStatus::Scheduled if m.slot_start <= now_epoch)
             || m.status == MatchStatus::Expired // legacy no-shows from old saves
     }
 
-    /// Swiss score per player: match points (3 per win, 1 per drawn match) and
-    /// game difference (games won − lost, so a 2-0 outranks a 2-1). Matches
-    /// whose slot has passed without a reported result count as ties until the
-    /// result is added. Used to pair and rank league play.
+    /// Swiss score per player: match points ([`match_points`]: 3 per win, 1
+    /// for taking a game without winning) and game difference (games won −
+    /// lost, so a 2-0 outranks a 2-1). Matches whose slot has passed without
+    /// a reported result count as 1-1 ties until the result is added. Used to
+    /// pair and rank league play.
     fn swiss_scores(&self, now_epoch: u64) -> HashMap<PlayerId, (i64, i64)> {
         let mut scores: HashMap<PlayerId, (i64, i64)> =
             self.player_order.iter().map(|&p| (p, (0, 0))).collect();
@@ -152,11 +154,10 @@ impl Game {
             if m.status != MatchStatus::Completed {
                 continue;
             }
-            let (pa, pb) = match m.a_wins.cmp(&m.b_wins) {
-                std::cmp::Ordering::Greater => (3, 0),
-                std::cmp::Ordering::Less => (0, 3),
-                std::cmp::Ordering::Equal => (1, 1),
-            };
+            let (pa, pb) = (
+                match_points(m.a_wins, m.b_wins),
+                match_points(m.b_wins, m.a_wins),
+            );
             if let Some(s) = scores.get_mut(&m.a) {
                 s.0 += pa;
                 s.1 += m.a_wins as i64 - m.b_wins as i64;
@@ -790,11 +791,12 @@ impl Game {
 
     // ---- standings ----------------------------------------------------------
 
-    /// Players ranked by ELO — or, in league mode, by swiss score: match
-    /// points, then opponents' match-win percentage (strength of schedule),
-    /// then game difference (so a 2-0 win outranks a 2-1 win) — with win/loss
-    /// records. Ties break by name. ELO plays no part in league standings, so
-    /// its seeding can never bias the final cut.
+    /// Players ranked by ELO — or, in league mode, by points ([`match_points`]:
+    /// 3 per match win, 1 for taking a game without winning), then opponents'
+    /// match-win percentage (strength of schedule), then game difference (so
+    /// a 2-0 win outranks a 2-1 win) — with win/loss records. Ties break by
+    /// name. ELO plays no part in league standings, so its seeding can never
+    /// bias the final cut.
     pub fn standings(&self) -> Vec<Standing> {
         let mut by_id: HashMap<PlayerId, Standing> = self
             .player_order
@@ -893,11 +895,19 @@ fn record_completed(s: Option<&mut Standing>, my_games: u32, their_games: u32) {
     s.played += 1;
     s.game_wins += my_games;
     s.game_losses += their_games;
+    s.points += match_points(my_games, their_games);
     match my_games.cmp(&their_games) {
-        std::cmp::Ordering::Greater => { s.wins += 1; s.points += 3; }
+        std::cmp::Ordering::Greater => s.wins += 1,
         std::cmp::Ordering::Less => s.losses += 1,
-        std::cmp::Ordering::Equal => { s.draws += 1; s.points += 1; }
+        std::cmp::Ordering::Equal => s.draws += 1,
     }
+}
+
+/// League match points for one side of a completed match: 3 for winning the
+/// match, 1 for taking at least a game without winning (a 2-1 loss or a 1-1
+/// draw), 0 otherwise.
+fn match_points(my_games: u32, their_games: u32) -> i64 {
+    if my_games > their_games { 3 } else if my_games > 0 { 1 } else { 0 }
 }
 
 /// Standard ELO update for a match. `sa` is player A's score (1 win / 0.5 draw /

@@ -488,7 +488,8 @@ pub struct Standing {
     /// Upcoming (still-scheduled) matches.
     pub scheduled: u32,
     pub cancellations: u32,
-    /// Swiss match points (3 per match win, 1 per drawn match).
+    /// Match points: 3 per match win, 1 for taking a game without winning the
+    /// match (a 2-1 loss or a 1-1 draw).
     pub points: i64,
     /// Individual games won/lost across completed matches — the best-of-three
     /// margin tiebreak (a 2-0 win ranks above a 2-1 win).

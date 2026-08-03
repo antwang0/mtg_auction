@@ -59,12 +59,13 @@ function renderLadder() {
   renderMonthCalendar(); // the Calendar tab's month grid depends on ladder data
   renderTodo();          // the schedule section depends on ladder data
 
-  // Standings (league games rank by swiss points; standard games by ELO —
-  // the server sends them pre-sorted either way).
+  // Standings (league games rank by points: 3 per match win, 1 for taking a
+  // game without winning; standard games by ELO — the server sends them
+  // pre-sorted either way).
   const league = state && state.mode === "league";
   $("t-standings").querySelector("thead tr").innerHTML =
     `<th>#</th><th>Player</th>` +
-    (league ? `<th class="num" title="3 per match win, 1 per draw">Pts</th>` : `<th class="num">ELO</th>`) +
+    (league ? `<th class="num" title="3 for winning the match, 1 for taking a game without winning">Pts</th>` : `<th class="num">ELO</th>`) +
     `<th class="num">W-L-D</th>` +
     (league ? `<th class="num" title="opponents' match-win % (strength of schedule)">OMW%</th>` : "") +
     (league ? `<th class="num" title="individual games won-lost">Games</th>` : "") +
@@ -315,9 +316,10 @@ function matchCard(m, me) {
 
   if (m.status === "completed") {
     const verdict = myW > oppW ? `you won ${myW}-${oppW}` : myW < oppW ? `${esc(opp)} won ${oppW}-${myW}` : "draw";
-    // League scores swiss match points (3 win / 1 draw); standard games ELO.
+    // League scores 3 per match win, 1 for taking a game without winning;
+    // standard games ELO.
     const score = state && state.mode === "league"
-      ? `+${myW > oppW ? 3 : myW === oppW ? 1 : 0} pts`
+      ? `+${myW > oppW ? 3 : myW > 0 ? 1 : 0} pts`
       : (() => { const d = iAmA ? m.a_delta : m.b_delta; return `ELO ${d >= 0 ? "+" : ""}${d}`; })();
     return `<div class="matchcard">${head}<span class="muted">${verdict} · ${score}</span></div>`;
   }
