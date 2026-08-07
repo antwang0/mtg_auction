@@ -542,3 +542,42 @@ async fn league_history_serves_aggregates_but_only_your_own_bid() {
     assert!(row["my_bid"].is_null(), "no token, no bid");
     assert_eq!(row["won"], false);
 }
+
+/// The crossing bid and offer are the traders' private limit prices. `/api/log`
+/// is admin-gated to protect them, so they must not ride along in the round
+/// history that `/api/state` serves to every client.
+#[tokio::test]
+async fn public_round_history_hides_the_crossing_bid_and_offer() {
+    let base = spawn().await;
+    let c = reqwest::Client::new();
+    let (alice, bob) = setup_game_with(&c, &base, &setup_body_house()).await;
+
+    c.post(format!("{base}/api/house/offer")).header("x-token", &alice).send().await.unwrap();
+    let card = get_state(&c, &base, Some(&bob)).await["house"][0]["card"].as_u64().unwrap();
+    // Bob's limit price is well above what he ends up paying, so a leak here
+    // would hand every rival his true valuation.
+    c.post(format!("{base}/api/bid")).header("x-token", &bob)
+        .json(&json!({ "player": 2, "card": card, "qty": 1, "price": 90000 }))
+        .send().await.unwrap();
+    c.post(format!("{base}/api/close")).header("x-token", &alice).send().await.unwrap();
+
+    for (who, token) in [("a player", Some(bob.as_str())), ("an anonymous caller", None)] {
+        let st = get_state(&c, &base, token).await;
+        let rounds = st["history"].as_array().unwrap();
+        let traded: Vec<&Value> = rounds.iter().flat_map(|r| r["trades"].as_array().unwrap()).collect();
+        assert!(!traded.is_empty(), "the round produced a trade for {who} to see");
+        for t in traded {
+            assert!(t.get("price").is_some(), "the cleared price stays public");
+            assert!(t.get("buyer_name").is_some(), "so does who traded");
+            assert!(t.get("bid").is_none(), "the buyer's limit price leaked to {who}");
+            assert!(t.get("offer").is_none(), "the seller's limit price leaked to {who}");
+        }
+    }
+
+    // The host's ledger still has them — that is what it is gated for.
+    let log: Value = c.get(format!("{base}/api/log")).header("x-token", &alice)
+        .send().await.unwrap().json().await.unwrap();
+    let logged: Vec<&Value> = log["trades"].as_array().unwrap()
+        .iter().flat_map(|r| r["trades"].as_array().unwrap()).collect();
+    assert!(logged.iter().any(|t| t.get("bid").is_some()), "the host can still audit bids");
+}

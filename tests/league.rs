@@ -942,3 +942,30 @@ fn manual_inventory_is_league_only_and_bounded() {
     .unwrap();
     assert!(std.inventory_add(1, pool_of(&[("Bog Rat", 1)])).is_err());
 }
+
+/// A $0 bid is not a bid: every player already implicitly bids $0 on every
+/// card, so an explicit one would buy nothing but queue priority — real
+/// bidders take copies before the free leftovers are drawn — and could set the
+/// clearing price at 0 as the marginal bid.
+#[test]
+fn zero_and_negative_league_bids_are_rejected() {
+    let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();
+    stock_and_open(&mut g, &[("Bog Rat", 2)], 1_000);
+    let rat = card_id(&g, "Bog Rat");
+
+    assert!(g.place_league_bid(1, rat, 0).is_err(), "$0 is not a bid");
+    assert!(g.place_league_bid(1, rat, -100).is_err(), "nor is a negative one");
+    assert!(g.league_bids.is_empty(), "a rejected bid leaves nothing resting");
+
+    // A penny is a real bid, and still can't be beaten by bidding nothing.
+    g.place_league_bid(1, rat, 1).unwrap();
+    assert_eq!(g.league_bids.len(), 1);
+    assert!(g.place_league_bid(2, rat, 0).is_err());
+
+    // With one real bid on two copies, Alice wins at 0 and the second copy is
+    // drawn among the players who (correctly) never bid.
+    g.close_league_auction(&mut Rng::new(1)).unwrap();
+    let c = g.league_clears.iter().find(|c| c.card == rat).unwrap();
+    assert_eq!(c.bids.len(), 1, "only the real bid was ever recorded");
+    assert!(c.winners.contains(&1));
+}

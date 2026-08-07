@@ -154,7 +154,7 @@ function renderLeaguePool(opts) {
       `<div class="tile-foot"><span class="${rarityClass(c.rarity)}">${c.rarity}</span><span class="num">×${h.qty} available</span></div>` +
       (mine ? `<div class="tile-orders">${mine}</div>` : "") +
       (open && loggedIn
-        ? `<div class="lg-bidrow"><input class="lg-price" type="number" min="0" step="0.01" placeholder="$" title="your bid per copy" data-bid-card="${c.id}" />` +
+        ? `<div class="lg-bidrow"><input class="lg-price" type="number" min="0.01" step="0.01" placeholder="$" title="your bid per copy" data-bid-card="${c.id}" />` +
           `<button class="buy lg-bid" data-card="${c.id}">Bid</button></div>`
         : "");
     g.appendChild(tile);
@@ -213,6 +213,9 @@ $("tab-auction").addEventListener("click", async (e) => {
     const input = bid.closest(".lg-bidrow").querySelector(".lg-price");
     const price = toCents(input.value);
     if (!input.value.trim()) { input.focus(); return; }
+    // Everyone already implicitly bids $0, so an explicit one is rejected by
+    // the server — say so here rather than making the round trip.
+    if (price <= 0) { $("lg-error").textContent = "A bid must be more than $0."; input.focus(); return; }
     try {
       await api("/api/league/bid", "POST", { card: Number(bid.dataset.card), price });
       $("lg-error").textContent = "";

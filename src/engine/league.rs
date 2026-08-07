@@ -112,8 +112,12 @@ impl Game {
         if self.house.held(card) == 0 {
             return Err("that card isn't in this auction's pool".into());
         }
-        if price < 0 {
-            return Err("price cannot be negative".into());
+        // A $0 bid is never a real bid: every player already implicitly bids 0
+        // on every card. Placing one explicitly would buy queue priority for
+        // nothing — real bidders take copies before the leftovers are handed
+        // out — and could set the clearing price at 0 as the marginal bid.
+        if price <= 0 {
+            return Err("bid must be more than $0 — everyone already bids $0 on every card".into());
         }
         if price > MAX_PRICE {
             return Err("price is too high".into());

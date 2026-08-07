@@ -148,10 +148,11 @@ function renderHistory() {
     else r.trades.forEach((t) => {
       const line = document.createElement("div");
       line.className = "trade";
+      // The crossing bid and offer are the traders' private limit prices and
+      // aren't served here — only the host's ledger shows them.
       line.innerHTML =
         `<span class="buyer">${esc(t.buyer_name)}</span> bought ${t.qty}× <b>${esc(t.card_name)}</b> ` +
-        `from <span class="seller">${esc(t.seller_name)}</span> @ ${fmtUSD(t.price)} ` +
-        `<span class="muted">(bid ${fmtUSD(t.bid)} / offer ${fmtUSD(t.offer)})</span>`;
+        `from <span class="seller">${esc(t.seller_name)}</span> @ ${fmtUSD(t.price)}`;
       block.appendChild(line);
     });
     div.appendChild(block);

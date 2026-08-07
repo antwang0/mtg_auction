@@ -178,6 +178,58 @@ fn player_trade_views(game: &Game, player: PlayerId) -> Vec<PlayerTradeView> {
         .collect()
 }
 
+/// A trade as *everyone* may see it: who bought what from whom, and the price
+/// it actually cleared at.
+///
+/// Deliberately not [`Trade`], which also carries the crossing `bid` and
+/// `offer` — the two traders' private limit prices. Those are exactly what
+/// `/api/log` is admin-gated to protect, so they must not ride along in the
+/// state every client polls. A sealed-bid league auction leaks a winner's
+/// whole valuation otherwise, and in the standard economy it leaks both
+/// parties' reservation prices on every fill.
+#[derive(Serialize)]
+pub struct TradeView {
+    card: CardId,
+    card_name: String,
+    buyer: PlayerId,
+    buyer_name: String,
+    seller: PlayerId,
+    seller_name: String,
+    qty: u32,
+    price: Cents,
+}
+
+/// A closed round as everyone may see it. `clears` is unchanged: it is the
+/// per-card top of book, an aggregate attributed to nobody, and the auction
+/// publishes it on purpose.
+#[derive(Serialize)]
+pub struct RoundResultView {
+    round: u32,
+    trades: Vec<TradeView>,
+    clears: Vec<CardClear>,
+}
+
+fn public_round(r: &RoundResult) -> RoundResultView {
+    RoundResultView {
+        round: r.round,
+        trades: r
+            .trades
+            .iter()
+            .map(|t| TradeView {
+                card: t.card,
+                card_name: t.card_name.clone(),
+                buyer: t.buyer,
+                buyer_name: t.buyer_name.clone(),
+                seller: t.seller,
+                seller_name: t.seller_name.clone(),
+                qty: t.qty,
+                price: t.price,
+            })
+            .collect(),
+        clears: r.clears.clone(),
+    }
+}
+
 /// Full state for the client. Public info plus, for the player identified by
 /// the request token, that player's own (private) resting orders.
 /// The logged-in player's resting league bids.
@@ -201,7 +253,7 @@ pub struct StateView {
     set_name: String,
     cards: Vec<CardView>,
     players: Vec<PlayerView>,
-    history: Vec<RoundResult>,
+    history: Vec<RoundResultView>,
     /// The player the request token belongs to, if any.
     me: Option<PlayerId>,
     am_admin: bool,
@@ -427,7 +479,10 @@ pub async fn get_state(State(state): State<AppState>, headers: HeaderMap) -> Res
         set_name: game.set_name.clone(),
         cards,
         players,
-        history: game.history[game.history.len().saturating_sub(HISTORY_ROUNDS)..].to_vec(),
+        history: game.history[game.history.len().saturating_sub(HISTORY_ROUNDS)..]
+            .iter()
+            .map(public_round)
+            .collect(),
         me,
         am_admin: game.is_admin(&token),
         my_has_password,
