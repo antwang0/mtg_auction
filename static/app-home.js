@@ -61,15 +61,12 @@ function renderHomeCards() {
       (league ? stat("Bids placed", String((state.my_league_bids || []).length)) : "") +
     `</div>` +
     (holds.length
-      ? `<table class="grid mini"><thead><tr><th>Card</th><th class="num">Qty</th><th class="num">Ref $</th>${league ? "<th></th>" : ""}</tr></thead><tbody>` +
+      ? `<table class="grid mini"><thead><tr><th>Card</th><th class="num">Qty</th><th class="num">Ref $</th></tr></thead><tbody>` +
         holds.map((h) => {
           const c = cardById[h.card] || {};
           const off = myOfferByCard[h.card] ? ` <span class="muted">(${myOfferByCard[h.card].qty} offered)</span>` : "";
-          // League inventories are manually curated — allow removing copies here
-          // (the Inventory tab is hidden in league mode).
-          const remove = league ? `<td><button class="linkbtn home-inv-remove" data-card="${h.card}" title="remove one copy">−1</button></td>` : "";
           return `<tr data-card="${h.card}"><td>${esc(h.name)} <span class="pips">${colorPips(c.colors || "")}</span>${off}</td>` +
-            `<td class="num">×${h.qty}</td><td class="num">${fmtUSD(c.ref_price ?? null)}</td>${remove}</tr>`;
+            `<td class="num">×${h.qty}</td><td class="num">${fmtUSD(c.ref_price ?? null)}</td></tr>`;
         }).join("") +
         `</tbody></table>`
       : `<p class="muted">You don't hold any cards yet.</p>`);

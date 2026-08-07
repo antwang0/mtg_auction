@@ -26,15 +26,23 @@ async function loadAuctionHistory() {
   } finally {
     ahLoading = false;
   }
-  renderAuctionHistory();
+  ahRefreshViews();
 }
 
-// Called on every render: load when the tab is open and the cache is missing
-// or stale (another auction has closed since it was built).
+// The Home tab shows the collected count too, so the rows are loaded for any
+// league game — but the table itself is only rebuilt when you're looking at
+// it, since that's the expensive part and every client polls.
+function ahRefreshViews() {
+  ahClaimInfo();
+  if (activeTab === "history") renderAuctionHistory();
+}
+
+// Called on every render: (re)load when the cache is missing or stale —
+// another auction has closed since it was built.
 function syncAuctionHistory() {
-  if (!state || !isLeague(state) || activeTab !== "history") return;
-  if (ahRows !== null && ahLoadedAt === (state.rounds_closed ?? 0)) { renderAuctionHistory(); return; }
-  loadAuctionHistory();
+  if (!state || !isLeague(state)) return;
+  if (ahRows === null || ahLoadedAt !== (state.rounds_closed ?? 0)) { loadAuctionHistory(); return; }
+  ahRefreshViews();
 }
 
 // A row's outcome for the logged-in player. Winning without a bid means a
@@ -137,19 +145,27 @@ function renderAuctionHistory() {
     `</tbody></table>`;
 }
 
-// The pickup checklist. Counts cover every card you've won, not just the
-// filtered view, because "mark all" ticks off the lot.
+// The pickup checklist, drawn in two places: the History tab and Home. Counts
+// cover every card you've won, not just the filtered view, because "mark all"
+// ticks off the lot.
+const AH_CLAIM_WIDGETS = [
+  ["ah-claim-row", "ah-claim-info", "ah-claim-all"],
+  ["home-claim-row", "home-claim-info", "home-claim-all"],
+];
+
 function ahClaimInfo() {
   const wins = (ahRows || []).filter((r) => r.won);
   const done = wins.filter((r) => r.claimed).length;
-  const show = state && state.me != null && wins.length > 0;
-  $("ah-claim-row").classList.toggle("hidden", !show);
-  if (!show) return;
-  $("ah-claim-info").textContent =
-    `${done} of ${wins.length} won card${wins.length === 1 ? "" : "s"} collected`;
-  const all = done === wins.length;
-  $("ah-claim-all").textContent = all ? "Unmark all collected" : "Mark all collected";
-  $("ah-claim-all").dataset.claimed = all ? "1" : "0";
+  const show = state && isLeague(state) && state.me != null && wins.length > 0;
+  const all = wins.length > 0 && done === wins.length;
+  const text = `${done} of ${wins.length} won card${wins.length === 1 ? "" : "s"} collected`;
+  AH_CLAIM_WIDGETS.forEach(([row, info, btn]) => {
+    $(row).classList.toggle("hidden", !show);
+    if (!show) return;
+    $(info).textContent = text;
+    $(btn).textContent = all ? "Unmark all collected" : "Mark all collected";
+    $(btn).dataset.claimed = all ? "1" : "0";
+  });
 }
 
 function ahExportInfo(n) {
@@ -203,7 +219,7 @@ $("ah-export-txt").onclick = () => {
 // on screen.
 async function ahClaim(apply, path, body) {
   apply();
-  renderAuctionHistory();
+  ahRefreshViews();
   try {
     await api(path, "POST", body);
     $("ah-error").textContent = "";
@@ -221,12 +237,15 @@ $("ah-table").addEventListener("change", (e) => {
   ahClaim(() => { if (row) row.claimed = claimed; }, "/api/league/claim", { round, card, claimed });
 });
 
-$("ah-claim-all").onclick = () => {
-  const claimed = $("ah-claim-all").dataset.claimed !== "1";
+// Same action from either widget.
+function ahClaimAll(btnId) {
+  const claimed = $(btnId).dataset.claimed !== "1";
   ahClaim(
     () => (ahRows || []).forEach((r) => { if (r.won) r.claimed = claimed; }),
     "/api/league/claim/all", { claimed });
-};
+}
+$("ah-claim-all").onclick = () => ahClaimAll("ah-claim-all");
+$("home-claim-all").onclick = () => ahClaimAll("home-claim-all");
 // Load on first open of the tab; syncAuctionHistory keeps it fresh after that.
 document.querySelector('.tab[data-tab="history"]').addEventListener("click", syncAuctionHistory);
 // Card names open the usual card modal — but not when the click was meant for

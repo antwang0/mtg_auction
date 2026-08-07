@@ -248,10 +248,9 @@ $("btn-inv-add").onclick = async () => {
   finally { btn.disabled = false; }
 };
 
-// Remove one copy of a holding. Buttons appear both on the Inventory tab
-// (standard-mode holdings table) and the Home "Your Cards" table (league mode,
-// where the Inventory tab is hidden). Home rows also open the card modal on
-// click, so stop propagation there.
+// Remove one copy of a holding, from the Inventory tab's holdings table. The
+// Home "Your Cards" table is a read-only list of what you own — league cards
+// come from the auction, not from hand-curated inventory.
 async function removeOneCopy(card) {
   try { await api("/api/inventory/remove", "POST", { card, qty: 1 }); await refresh(); }
   catch (err) { toastError(err.message); }
@@ -259,10 +258,4 @@ async function removeOneCopy(card) {
 $("my-holdings").addEventListener("click", (e) => {
   const b = e.target.closest(".inv-remove");
   if (b) removeOneCopy(Number(b.dataset.card));
-});
-$("home-cards").addEventListener("click", (e) => {
-  const b = e.target.closest(".home-inv-remove");
-  if (!b) return;
-  e.stopPropagation(); // don't also open the card modal
-  removeOneCopy(Number(b.dataset.card));
 });

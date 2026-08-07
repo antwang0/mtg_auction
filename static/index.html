@@ -49,6 +49,13 @@
             <h2 id="home-cards-title">Your Cards</h2>
             <div id="home-cards"></div>
 
+            <!-- League: tick off auction winnings from where you see your
+                 cards. Mirrors the same control on the History tab. -->
+            <div class="order-row hidden" id="home-claim-row">
+              <span id="home-claim-info" class="muted"></span>
+              <button type="button" id="home-claim-all" class="ghost">Mark all collected</button>
+            </div>
+
             <!-- League mode: manually track the cards from your physical packs. -->
             <div id="manual-inv" class="hidden">
               <h3>Add cards to your inventory <span class="muted">(optional — track your opened packs for planning)</span></h3>
