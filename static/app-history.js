@@ -93,7 +93,11 @@ function renderAuctionHistory() {
 
   if (ahRows === null) { box.innerHTML = `<p class="muted">Loading…</p>`; ahExportInfo(0); return; }
   if (!ahRows.length) {
-    box.innerHTML = `<p class="muted">No auction has closed yet — results appear here after the first close.</p>`;
+    // Rounds that closed before this tab existed left no per-card record, so
+    // don't tell someone with a season behind them that nothing has happened.
+    box.innerHTML = (state.rounds_closed || 0) > 0
+      ? `<p class="muted">No per-card results are stored for the ${state.rounds_closed} auction${state.rounds_closed === 1 ? "" : "s"} that have closed — they ran before this tab existed. The host can rebuild them from the order ledger (Round Control on the admin page).</p>`
+      : `<p class="muted">No auction has closed yet — results appear here after the first close.</p>`;
     $("ah-status").textContent = "";
     ahExportInfo(0);
     return;

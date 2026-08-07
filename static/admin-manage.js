@@ -374,3 +374,19 @@ $("btn-close").onclick = async () => {
     await refresh();
   } catch (e) { $("ctrl-error").textContent = e.message; }
 };
+
+$("btn-rebuild-history").onclick = async () => {
+  const btn = $("btn-rebuild-history");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/league/history/rebuild", "POST", {});
+    $("ctrl-error").textContent = "";
+    btn.textContent = r.rebuilt
+      ? `Rebuilt ${r.rebuilt} round${r.rebuilt === 1 ? "" : "s"}`
+      : "Nothing to rebuild — history is already complete";
+    await refresh();
+  } catch (e) {
+    $("ctrl-error").textContent = e.message;
+    btn.textContent = "Rebuild auction history";
+  } finally { btn.disabled = false; }
+};

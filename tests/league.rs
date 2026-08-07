@@ -1031,3 +1031,71 @@ fn claim_all_covers_only_your_own_wins() {
     g.set_league_claim(torch_winner, 1, torch, true).unwrap();
     assert!(g.league_clears.iter().find(|c| c.card == torch).unwrap().claimed.contains(&torch_winner));
 }
+
+/// Auction history can be rebuilt for rounds that closed before it was being
+/// recorded. The proof that the reconstruction is sound: rebuilding a round we
+/// *did* record must reproduce it exactly, amended prices and all.
+#[test]
+fn rebuilt_auction_history_matches_what_the_close_recorded() {
+    let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();
+
+    // Round 1. The mythic resolves first and eats Alice's balance, so her rat
+    // bid is amended down — the case the ledger alone can't tell you about.
+    stock_and_open(&mut g, &[("Avatar of Eternity", 1), ("Bog Rat", 1)], 1_000);
+    let avatar = card_id(&g, "Avatar of Eternity");
+    let rat = card_id(&g, "Bog Rat");
+    g.place_league_bid(1, avatar, 9_000).unwrap();
+    g.place_league_bid(1, rat, 5_000).unwrap();
+    g.place_league_bid(2, rat, 800).unwrap();
+    g.place_league_bid(3, rat, 300).unwrap();
+    g.close_league_auction(&mut Rng::new(1)).unwrap();
+    assert_eq!(g.players[&1].balance, 2_500, "Alice spent nearly everything, then drew the stipend");
+
+    // Round 2, so the backwards balance walk has to cross a stipend and a
+    // round of spending to land on round 1's opening balances.
+    stock_and_open(&mut g, &[("Torch Bearer", 1)], 200_000);
+    let torch = card_id(&g, "Torch Bearer");
+    g.place_league_bid(2, torch, 400).unwrap();
+    // A re-bid replaces the earlier one, and a cancelled bid must not come
+    // back from the ledger.
+    g.place_league_bid(3, torch, 100).unwrap();
+    g.place_league_bid(3, torch, 250).unwrap();
+    let doomed = g.place_league_bid(1, torch, 999).unwrap();
+    g.cancel_league_bid(1, doomed).unwrap();
+    g.close_league_auction(&mut Rng::new(2)).unwrap();
+
+    let recorded = g.league_clears.clone();
+    assert!(recorded.iter().any(|c| c.round == 1) && recorded.iter().any(|c| c.round == 2));
+    // Sanity-check the round we're about to reproduce.
+    let rec_rat = recorded.iter().find(|c| c.card == rat).unwrap();
+    assert_eq!(rec_rat.high, Some(1_000), "Alice's $50 bid was trimmed to her last $10");
+    assert_eq!(rec_rat.cover, Some(800));
+
+    // Wipe it as if those auctions had closed before the feature existed.
+    g.league_clears.clear();
+    assert_eq!(g.rebuild_league_clears().unwrap(), 2, "both rounds rebuilt");
+
+    let norm = |cs: &[LeagueClear]| {
+        let mut v: Vec<_> = cs
+            .iter()
+            .map(|c| {
+                let (mut bids, mut winners) = (c.bids.clone(), c.winners.clone());
+                bids.sort();
+                winners.sort();
+                (c.round, c.card, c.copies, c.cleared, c.high, c.cover, bids, winners)
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(norm(&g.league_clears), norm(&recorded), "the rebuild reproduces the close exactly");
+
+    // The cancelled bid stayed cancelled, and the re-bid kept only its last price.
+    let torch_clear = g.league_clears.iter().find(|c| c.card == torch).unwrap();
+    assert!(torch_clear.bids.iter().all(|(p, _)| *p != 1), "a cancelled bid doesn't come back");
+    assert_eq!(torch_clear.bids.iter().find(|(p, _)| *p == 3).unwrap().1, 250, "the re-bid's last price wins");
+
+    // Rebuilding again is a no-op: natively recorded rounds are authoritative.
+    assert_eq!(g.rebuild_league_clears().unwrap(), 0);
+    assert_eq!(norm(&g.league_clears), norm(&recorded), "and nothing was duplicated or altered");
+}

@@ -249,6 +249,12 @@
       <div class="admin">
         <button id="btn-close" class="primary">Close auction &amp; match orders</button>
       </div>
+      <!-- League only: fills in the players' History tab for auctions that
+           closed before it was being recorded. -->
+      <div class="admin hidden" id="rebuild-row">
+        <button id="btn-rebuild-history" class="ghost">Rebuild auction history</button>
+        <span class="muted">Reconstructs past rounds from the order ledger for the players' History tab. Safe to re-run; already-recorded rounds are left alone.</span>
+      </div>
       <div id="ctrl-error" class="error"></div>
     </section>
 

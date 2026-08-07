@@ -141,6 +141,8 @@ function render() {
         : `${phaseLabel(state.phase)} · round ${state.round} of ${state.total_rounds} is open for orders${timer}.`;
     $("btn-close").disabled = !isTrading(state) && !leagueOpen(state);
   }
+  // Rebuilding history only means anything once a league round has closed.
+  $("rebuild-row").classList.toggle("hidden", !isLeague(state) || !(state.rounds_closed > 0));
 
   timerDeadline = state.round_deadline ?? null;
   clockSkew = (state.server_now || 0) - Math.floor(Date.now() / 1000);

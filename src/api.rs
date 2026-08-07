@@ -62,6 +62,7 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/league/bid/cancel", post(cancel_league_bid))
         .route("/api/league/open", post(open_league_auction))
         .route("/api/league/history", get(league_history))
+        .route("/api/league/history/rebuild", post(league_history_rebuild))
         .route("/api/league/claim", post(league_claim))
         .route("/api/league/claim/all", post(league_claim_all))
         .route("/api/inventory/add", post(inventory_add))
@@ -1447,6 +1448,21 @@ pub async fn league_history(State(state): State<AppState>, headers: HeaderMap) -
         })
         .collect();
     Ok(Json(LeagueHistoryResponse { rows }))
+}
+
+/// Host: rebuild per-card auction history for rounds that closed before it was
+/// being recorded. Reconstructed from the order ledger and the trade history;
+/// rounds already recorded natively are left untouched.
+pub async fn league_history_rebuild(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, ApiError> {
+    let rebuilt = {
+        let mut game = state.lock_game();
+        if !game.is_admin(&token_of(&headers)) {
+            return Err(ApiError::unauthorized("only the host can rebuild auction history"));
+        }
+        game.rebuild_league_clears()?
+    };
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "rebuilt": rebuilt })))
 }
 
 #[derive(Deserialize)]

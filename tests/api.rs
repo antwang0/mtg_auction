@@ -665,3 +665,81 @@ async fn league_claims_are_per_player_and_winner_only() {
         .json(&json!({ "claimed": true })).send().await.unwrap().json().await.unwrap();
     assert_eq!(r["changed"], 0);
 }
+
+/// Rebuilding auction history is host-only, and it repopulates the History tab
+/// for rounds that closed before the per-card record existed.
+#[tokio::test]
+async fn league_history_rebuild_is_host_only_and_refills_the_tab() {
+    use mtg_auction::engine::{Game, Rng};
+    use mtg_auction::model::{CardPool, Config, GameMode};
+
+    let state = mtg_auction::app::App::new(None);
+    let tokens: Vec<String> = {
+        let mut game = state.lock_game();
+        let cfg = Config {
+            mode: GameMode::League,
+            player_names: vec!["Alice".into(), "Bob".into(), "Carol".into()],
+            starting_money: 10_000,
+            league_close_hour: 20,
+            league_period_weeks: 1,
+            league_first_auction_day: 20_821,
+            league_matchmaking_start_day: 20_814,
+            seed: 7,
+            ..Config::default()
+        };
+        *game = Game::setup(cfg, CardPool::default()).unwrap();
+        let sample = CardPool::sample();
+        let rat = sample.commons.iter().find(|c| c.name == "Bog Rat").unwrap().clone();
+        game.add_cards(CardPool { exact: Some(vec![(rat, 2)]), ..CardPool::default() }).unwrap();
+        game.open_league_auction(1_000).unwrap();
+        let card = game.cards.values().find(|c| c.name == "Bog Rat").unwrap().id;
+        game.place_league_bid(1, card, 500).unwrap();
+        game.place_league_bid(2, card, 300).unwrap();
+        game.place_league_bid(3, card, 200).unwrap();
+        game.close_league_auction(&mut Rng::new(1)).unwrap();
+        // Wipe the per-card record, as for a league that closed rounds before
+        // the History tab existed.
+        game.league_clears.clear();
+        (1..=3).map(|id| game.tokens[&id].clone()).collect()
+    };
+
+    let app = mtg_auction::api::api_router().with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+    let c = reqwest::Client::new();
+
+    let rows = |tok: String| {
+        let (c, base) = (c.clone(), base.clone());
+        async move {
+            c.get(format!("{base}/api/league/history")).header("x-token", tok)
+                .send().await.unwrap().json::<Value>().await.unwrap()["rows"].as_array().unwrap().len()
+        }
+    };
+    assert_eq!(rows(tokens[0].clone()).await, 0, "nothing recorded to begin with");
+
+    // A player can't trigger it.
+    let r = c.post(format!("{base}/api/league/history/rebuild")).header("x-token", &tokens[1])
+        .json(&json!({})).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+
+    // The host can, and it comes back populated.
+    let r: Value = c.post(format!("{base}/api/league/history/rebuild")).header("x-token", &tokens[0])
+        .json(&json!({})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["rebuilt"], 1);
+    assert_eq!(rows(tokens[0].clone()).await, 1, "the tab has its round back");
+
+    // Carol's losing bid is recovered from the ledger, and stays private to her.
+    let carol: Value = c.get(format!("{base}/api/league/history")).header("x-token", &tokens[2])
+        .send().await.unwrap().json().await.unwrap();
+    assert_eq!(carol["rows"][0]["my_bid"], 200, "a losing bid is recoverable");
+    assert_eq!(carol["rows"][0]["won"], false);
+    assert_eq!(carol["rows"][0]["cover"], 200, "and it was the cover");
+    assert_eq!(carol["rows"][0]["cleared"], 300);
+    assert!(carol["rows"][0].get("bids").is_none(), "still no raw bid list");
+
+    // Re-running is a no-op.
+    let r: Value = c.post(format!("{base}/api/league/history/rebuild")).header("x-token", &tokens[0])
+        .json(&json!({})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["rebuilt"], 0);
+}

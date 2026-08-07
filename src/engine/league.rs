@@ -152,6 +152,126 @@ impl Game {
         Ok(())
     }
 
+    /// Rebuild the per-card auction history for rounds that closed before it
+    /// was being recorded. Returns how many rounds were rebuilt.
+    ///
+    /// This is a *constrained* replay, not a re-run of the close. The recorded
+    /// outcome is taken as given — who won (the round's trades) and what each
+    /// card cleared at (`CardClear`) — and only the bid amendment is recomputed.
+    /// That is deliberate: the close seeds its RNG from the wall clock, which is
+    /// never stored, so tie-breaks and the free-leftover draw cannot be
+    /// reproduced. Reading the winners off the record sidesteps the RNG.
+    ///
+    /// Every input is on disk. Losing bids come from the append-only order
+    /// ledger; `history` is never pruned; and balances are walked backwards
+    /// from today's, which is exact here because in league mode the only things
+    /// that move a balance are auction purchases and the stipend — and the
+    /// stipend is fixed at setup and cannot be edited mid-game.
+    ///
+    /// Rounds already present are left alone: those were recorded natively at
+    /// the close and are authoritative.
+    pub fn rebuild_league_clears(&mut self) -> Result<usize, String> {
+        self.require_league()?;
+        let stipend = self.config.weekly_stipend.max(0);
+        let have: std::collections::HashSet<u32> = self.league_clears.iter().map(|c| c.round).collect();
+        let newest = self.history.iter().map(|r| r.round).max().unwrap_or(0);
+        let oldest_kept = newest.saturating_sub(LEAGUE_CLEAR_ROUNDS - 1);
+
+        // The bids resting at each close, from the order ledger. The log is
+        // append-only, so for each (player, card) the last event in it wins: a
+        // re-bid is a fresh Place that silently replaced the previous bid, and
+        // a cancel takes it off the book.
+        let mut resting: HashMap<u32, HashMap<(PlayerId, CardId), Cents>> = HashMap::new();
+        for e in &self.order_log {
+            if e.kind != OrderKind::Bid {
+                continue;
+            }
+            let per = resting.entry(e.round).or_default();
+            match e.action {
+                OrderAction::Place => { per.insert((e.player, e.card), e.price); }
+                OrderAction::Cancel => { per.remove(&(e.player, e.card)); }
+            }
+        }
+
+        // Walk rounds newest → oldest, undoing each to recover the balances the
+        // close in front of it started from.
+        let mut balance: HashMap<PlayerId, Cents> =
+            self.players.iter().map(|(id, p)| (*id, p.balance)).collect();
+        let mut rounds: Vec<&RoundResult> = self.history.iter().collect();
+        rounds.sort_by_key(|r| std::cmp::Reverse(r.round));
+
+        let empty = HashMap::new();
+        let mut built: Vec<LeagueClear> = Vec::new();
+        for r in rounds {
+            // Undo this round: take back the stipend it paid, and refund what
+            // its buyers spent. `balance` then holds the pre-round state.
+            for b in balance.values_mut() {
+                *b -= stipend;
+            }
+            for t in &r.trades {
+                if let Some(b) = balance.get_mut(&t.buyer) {
+                    *b += t.price * t.qty as i64;
+                }
+            }
+            if r.round < oldest_kept || have.contains(&r.round) {
+                continue;
+            }
+            let bids_this = resting.get(&r.round).unwrap_or(&empty);
+            let mut bal = balance.clone();
+            // `clears` was pushed in resolution order (rarest first, then by
+            // name), so replaying it in order spends money in the same order
+            // the close did — which is what the amendment depends on.
+            for cc in &r.clears {
+                let cleared = cc.cleared.unwrap_or(0);
+                let winners: Vec<PlayerId> =
+                    r.trades.iter().filter(|t| t.card == cc.card).map(|t| t.buyer).collect();
+                let mut amended: Vec<(PlayerId, Cents)> = bids_this
+                    .iter()
+                    .filter(|((_, card), _)| *card == cc.card)
+                    .map(|((p, _), price)| {
+                        // A player removed since has no balance to anchor the
+                        // walk, so report their bid as entered rather than
+                        // amending it away to nothing.
+                        let a = match bal.get(p) {
+                            Some(b) => (*price).min(*b).max(0),
+                            None => *price,
+                        };
+                        (*p, a)
+                    })
+                    .collect();
+                // Highest first; ties by player id, only so the order is stable.
+                amended.sort_by_key(|(p, price)| (std::cmp::Reverse(*price), *p));
+                built.push(LeagueClear {
+                    round: r.round,
+                    card: cc.card,
+                    card_name: cc.card_name.clone(),
+                    // `CardClear` records copies *sold*, not copies on the
+                    // block, so a round with carryover reads a little low here.
+                    copies: cc.volume,
+                    cleared,
+                    high: amended.first().map(|(_, price)| *price),
+                    // The cover is the best bid that took nothing. Ties across
+                    // the win boundary give the same number either way, even
+                    // though the original picked a different bidder.
+                    cover: amended.iter().find(|(p, _)| !winners.contains(p)).map(|(_, price)| *price),
+                    bids: amended,
+                    winners: winners.clone(),
+                    claimed: Vec::new(),
+                });
+                for w in &winners {
+                    if let Some(b) = bal.get_mut(w) {
+                        *b -= cleared;
+                    }
+                }
+            }
+        }
+
+        let rebuilt: std::collections::HashSet<u32> = built.iter().map(|c| c.round).collect();
+        self.league_clears.extend(built);
+        self.league_clears.sort_by_key(|c| c.round);
+        Ok(rebuilt.len())
+    }
+
     // ---- claiming winnings -----------------------------------------------
     //
     // League cards are handed over in person and no deliveries are recorded,
