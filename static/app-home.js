@@ -35,24 +35,12 @@ function stat(label, value) {
 }
 
 function renderHome() {
-  // League home is a lean summary: cash remaining and bids placed (cards and
-  // orders live on the Auction tab; there is no order book).
+  // League drops the order book (bids live on the Auction tab) but keeps the
+  // card list — it's the only place league players can see what they won.
   const league = state && isLeague(state);
   $("home-orders-sec").classList.toggle("hidden", !!league);
-  $("home-cards-title").textContent = league ? "Your League" : "Your Cards";
-  if (league) {
-    const box = $("home-cards");
-    const me = myPlayerView();
-    box.innerHTML = me
-      ? `<div class="stat-row">` +
-        stat("Cash remaining", fmtUSD(me.balance)) +
-        stat("Bids placed", String((state.my_league_bids || []).length)) +
-        `</div>`
-      : `<p class="muted">Log in to see your league summary.</p>`;
-    return;
-  }
   renderHomeCards();
-  renderHomeOrders();
+  if (!league) renderHomeOrders();
 }
 
 function renderHomeCards() {
@@ -70,6 +58,7 @@ function renderHomeCards() {
       stat("Distinct", String(holds.length)) +
       stat("Copies", String(copies)) +
       stat("Ref value", fmtUSD(value)) +
+      (league ? stat("Bids placed", String((state.my_league_bids || []).length)) : "") +
     `</div>` +
     (holds.length
       ? `<table class="grid mini"><thead><tr><th>Card</th><th class="num">Qty</th><th class="num">Ref $</th>${league ? "<th></th>" : ""}</tr></thead><tbody>` +
