@@ -28,7 +28,14 @@ function defaultPriceCents(id) {
 function getFilters(prefix) {
   const box = document.querySelector(`.filters[data-prefix="${prefix}"]`);
   const v = (cls) => box.querySelector(cls)?.value ?? "";
-  return { q: v(".f-q").trim().toLowerCase(), rarity: v(".f-rarity"), type: v(".f-type"), mvmin: v(".f-mvmin"), mvmax: v(".f-mvmax"), show: v(".f-show"), color: readColorFilter(box.querySelector(".colorsel")) };
+  return {
+    q: v(".f-q").trim().toLowerCase(), rarity: v(".f-rarity"), type: v(".f-type"),
+    mvmin: v(".f-mvmin"), mvmax: v(".f-mvmax"), show: v(".f-show"),
+    // ★-only is its own checkbox rather than a `show` option, so it stacks with
+    // the ownership facets ("cards I own that I still want", say).
+    wanted: !!box.querySelector(".f-wanted")?.checked,
+    color: readColorFilter(box.querySelector(".colorsel")),
+  };
 }
 function cardMatches(c, f) {
   if (f.q && !c.name.toLowerCase().includes(f.q)) return false;
@@ -38,7 +45,7 @@ function cardMatches(c, f) {
   if (f.mvmax !== "" && (c.cmc == null || c.cmc > Number(f.mvmax))) return false;
   if (f.color && !matchesColorIdentity(c, f.color)) return false;
   if (f.show === "owned" && mineOf(c) <= 0) return false;
-  if (f.show === "wanted" && !wants.has(c.name)) return false;
+  if (f.wanted && !wants.has(c.name)) return false;
   return true;
 }
 function sortVal(c, key) {
@@ -201,6 +208,13 @@ function renderModalInfo() {
   }
   $("modal-yours").innerHTML = yours.join("<br>") || `<span class="muted">No orders on this card yet.</span>`;
 
+  // League mode has no order book: bids are sealed, one per card, for a single
+  // copy, and they're placed on the Auction tab. Drop the order form (order
+  // quantity, ref/last price fill, Place Bid/Place Offer) and point there.
+  const league = isLeague(state);
+  $("modal-orderform").classList.toggle("hidden", league);
+  $("m-league-note").classList.toggle("hidden", !league);
+
   // Price history.
   const hist = clearHistByCard[c.id] || [];
   $("modal-history").innerHTML = hist.length
@@ -277,6 +291,8 @@ function toggleWant(name) {
   if (wants.has(name)) wants.delete(name); else wants.add(name);
   saveWants();
   renderPlan(); renderGallery();
+  // Stars also live on the auction pool tiles (and can filter them).
+  renderLeaguePool({ force: true });
   if (modalCardId != null) renderModalInfo();
 }
 
@@ -296,7 +312,12 @@ $("m-offer").onclick = () => modalOrder("offer");
 // Filter bars
 $$(".filters").forEach((box) => {
   const prefix = box.dataset.prefix;
-  const rerender = () => { (prefix === "inv" ? renderPlan() : renderGallery()); saveUi(); };
+  const rerender = () => {
+    if (prefix === "inv") renderPlan();
+    else if (prefix === "lg") renderLeaguePool({ force: true });
+    else renderGallery();
+    saveUi();
+  };
   box.addEventListener("input", rerender);
   box.addEventListener("change", rerender);
   // Colour buttons are <button> toggles, so they don't fire input/change.

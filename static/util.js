@@ -85,7 +85,7 @@ function readColorFilter(box) {
   return {
     colors: on.filter((b) => b.dataset.color).map((b) => b.dataset.color),
     colorless: on.some((b) => b.dataset.facet === "colorless"),
-    mode: box?.querySelector(".f-cmode")?.value || "atmost",
+    mode: box?.querySelector(".f-cmode")?.value || "exactly",
   };
 }
 
@@ -98,7 +98,12 @@ function applyColorFilter(box, f) {
     btn.classList.toggle("active", !!on);
   });
   const m = box.querySelector(".f-cmode");
-  if (m && f.mode) m.value = f.mode;
+  // Only restore the match mode when colours are actually selected. With none
+  // picked the mode does nothing (see matchesColorIdentity), and every saved
+  // filter from before "exactly" became the default carries the old "at most" —
+  // restoring that would pin returning players to it for good.
+  const anyColor = (f.colors || []).length > 0 || f.colorless;
+  if (m && f.mode && anyColor) m.value = f.mode;
 }
 
 // Does a card's colour identity satisfy a colour-filter state (from readColorFilter)?
@@ -170,6 +175,33 @@ function startLiveUpdates({ refresh, setConn }) {
   down();          // assume offline until the stream opens
   connect();
   refresh();
+}
+
+// ---- file export ----
+// Shared by the host's card export (admin-manage.js) and the players' auction
+// pool export (app-league.js); both read the page's global `state`.
+function downloadFile(filename, text, mime) {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Filename stem, taken from the set name.
+function exportSlug() {
+  return ((state && state.set_name) || "cards").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "cards";
+}
+// Column set for every card export, so the host's pool CSV and a player's
+// auction-pool CSV open the same way in a spreadsheet.
+const EXPORT_HEADER = ["name", "rarity", "supply", "mana_value", "type", "ref_price_usd"];
+// Rows of values -> CSV text, quoting any cell holding a comma, quote or newline.
+function toCsv(rows) {
+  const cell = (v) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return rows.map((r) => r.map(cell).join(",")).join("\n") + "\n";
 }
 
 // ---- feedback widget ----

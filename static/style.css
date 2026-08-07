@@ -364,6 +364,15 @@ table.grid th[data-sort]::after { content: attr(data-arrow); }
 .filters .f-mvmin, .filters .f-mvmax { width: 72px; }
 .filters .f-dir { padding: 0.4rem 0.6rem; }
 .filters .f-count { margin-left: auto; font-family: var(--mono); }
+/* ★-only toggle: `label` is display:block/uppercase by default, so re-flow it
+   inline to sit alongside the colour buttons. */
+.filters .f-wanted-lbl {
+  display: flex; align-items: center; gap: 0.3rem;
+  text-transform: none; letter-spacing: 0; font-size: 0.8rem;
+  white-space: nowrap; cursor: pointer; user-select: none;
+}
+.filters .f-wanted-lbl:hover { color: var(--accent); }
+.filters .f-wanted { width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
 
 #plan .want-cell { text-align: center; width: 1.6rem; }
 #plan tbody tr { cursor: pointer; }

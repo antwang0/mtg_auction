@@ -156,13 +156,12 @@
             <select class="f-show">
               <option value="all">all cards</option>
               <option value="owned">owned</option>
-              <option value="wanted">wanted ★</option>
             </select>
             <div class="colorsel" title="Filter by colour identity">
               <select class="f-cmode" title="Colour-identity match: at most / at least / exactly the chosen colours">
                 <option value="atmost">⊆ at most</option>
                 <option value="atleast">⊇ at least</option>
-                <option value="exactly">= exactly</option>
+                <option value="exactly" selected>= exactly</option>
               </select>
               <button type="button" class="cbtn" data-color="W" title="White">W</button>
               <button type="button" class="cbtn" data-color="U" title="Blue">U</button>
@@ -172,6 +171,7 @@
               <button type="button" class="cbtn" data-facet="colorless" title="Colorless">C</button>
               <button type="button" class="cbtn cbtn-clear" data-facet="clear" title="Clear colour filter">✕</button>
             </div>
+            <label class="f-wanted-lbl" title="Show only the cards you've marked with ★"><input type="checkbox" class="f-wanted" /> ★ wanted only</label>
             <span class="f-count muted"></span>
           </div>
           <table id="plan" class="grid">
@@ -210,13 +210,12 @@
             <select class="f-show">
               <option value="all">all cards</option>
               <option value="owned">owned</option>
-              <option value="wanted">wanted ★</option>
             </select>
             <div class="colorsel" title="Filter by colour identity">
               <select class="f-cmode" title="Colour-identity match: at most / at least / exactly the chosen colours">
                 <option value="atmost">⊆ at most</option>
                 <option value="atleast">⊇ at least</option>
-                <option value="exactly">= exactly</option>
+                <option value="exactly" selected>= exactly</option>
               </select>
               <button type="button" class="cbtn" data-color="W" title="White">W</button>
               <button type="button" class="cbtn" data-color="U" title="Blue">U</button>
@@ -226,6 +225,7 @@
               <button type="button" class="cbtn" data-facet="colorless" title="Colorless">C</button>
               <button type="button" class="cbtn cbtn-clear" data-facet="clear" title="Clear colour filter">✕</button>
             </div>
+            <label class="f-wanted-lbl" title="Show only the cards you've marked with ★"><input type="checkbox" class="f-wanted" /> ★ wanted only</label>
             <select class="f-sort" title="sort by">
               <option value="rarity">sort: rarity</option>
               <option value="name">sort: name</option>
@@ -251,6 +251,34 @@
           <div id="lg-summary" class="funds muted"></div>
           <div id="lg-error" class="error"></div>
           <div id="lg-mybids"></div>
+          <div class="filters" data-prefix="lg">
+            <input class="f-q" type="search" placeholder="search name…" />
+            <select class="f-rarity"><option value="">all rarities</option></select>
+            <select class="f-type"><option value="">all types</option></select>
+            <input class="f-mvmin" type="number" min="0" placeholder="MV ≥" title="min mana value" />
+            <input class="f-mvmax" type="number" min="0" placeholder="MV ≤" title="max mana value" />
+            <select class="f-show">
+              <option value="all">all cards</option>
+              <option value="bid">you've bid</option>
+              <option value="owned">you own</option>
+            </select>
+            <div class="colorsel" title="Filter by colour identity">
+              <select class="f-cmode" title="Colour-identity match: at most / at least / exactly the chosen colours">
+                <option value="atmost">⊆ at most</option>
+                <option value="atleast">⊇ at least</option>
+                <option value="exactly" selected>= exactly</option>
+              </select>
+              <button type="button" class="cbtn" data-color="W" title="White">W</button>
+              <button type="button" class="cbtn" data-color="U" title="Blue">U</button>
+              <button type="button" class="cbtn" data-color="B" title="Black">B</button>
+              <button type="button" class="cbtn" data-color="R" title="Red">R</button>
+              <button type="button" class="cbtn" data-color="G" title="Green">G</button>
+              <button type="button" class="cbtn" data-facet="colorless" title="Colorless">C</button>
+              <button type="button" class="cbtn cbtn-clear" data-facet="clear" title="Clear colour filter">✕</button>
+            </div>
+            <label class="f-wanted-lbl" title="Show only the cards you've marked with ★"><input type="checkbox" class="f-wanted" /> ★ wanted only</label>
+            <span class="f-count muted"></span>
+          </div>
           <div class="order-row">
             <label class="muted">Sort
               <select id="lg-sort">
@@ -261,6 +289,11 @@
                 <option value="mybid">Your bids first</option>
               </select>
             </label>
+          </div>
+          <div class="export-row">
+            <button type="button" id="lg-export-txt" class="ghost">Export pool (.txt)</button>
+            <button type="button" id="lg-export-csv" class="ghost">Export pool (.csv)</button>
+            <span id="lg-export-info" class="muted"></span>
           </div>
           <div id="lg-pool" class="gallery"></div>
         </section>
@@ -334,7 +367,8 @@
 
         <div id="modal-trade">
           <div id="modal-yours" class="modal-yours"></div>
-          <div class="modal-orderform">
+          <p id="m-league-note" class="muted hidden">Bid on this card from the Auction tab — one sealed bid per card, for one copy.</p>
+          <div id="modal-orderform" class="modal-orderform">
             <label>Qty <input id="m-qty" type="number" min="1" value="1" /></label>
             <label>Price ($)
               <span class="price-row">

@@ -224,18 +224,7 @@ function renderHouse() {
   });
 }
 
-// ---- card export ----
-function downloadFile(filename, text, mime) {
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-function exportSlug() {
-  return (state && state.set_name || "cards").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "cards";
-}
+// ---- card export ---- (downloadFile/exportSlug/toCsv live in util.js)
 function sortedCards() {
   return [...((state && state.cards) || [])].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -249,16 +238,12 @@ function exportDecklist() {
 function exportCsv() {
   const cards = sortedCards();
   if (!cards.length) return;
-  const cell = (v) => {
-    const s = v == null ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const rows = [["name", "rarity", "supply", "mana_value", "type", "ref_price_usd"]];
+  const rows = [EXPORT_HEADER];
   cards.forEach((c) => rows.push([
     c.name, c.rarity, c.supply, c.cmc ?? "", c.type_line ?? "",
     c.ref_price != null ? (c.ref_price / 100).toFixed(2) : "",
   ]));
-  downloadFile(`${exportSlug()}-cards.csv`, rows.map((r) => r.map(cell).join(",")).join("\n") + "\n", "text/csv");
+  downloadFile(`${exportSlug()}-cards.csv`, toCsv(rows), "text/csv");
 }
 $("btn-export-decklist").onclick = exportDecklist;
 $("btn-export-csv").onclick = exportCsv;

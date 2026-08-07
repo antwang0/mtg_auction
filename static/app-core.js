@@ -33,7 +33,7 @@ async function refresh() {
   try {
     state = await api("/api/state");
     render();
-    if (!uiRestored) { restoreUi(); uiRestored = true; renderPlan(); renderGallery(); }
+    if (!uiRestored) { restoreUi(); uiRestored = true; renderPlan(); renderGallery(); renderLeaguePool({ force: true }); }
     refreshLadder();
   } catch (e) { console.error(e); }
 }
@@ -238,12 +238,17 @@ function saveUi() {
   const read = (prefix) => {
     const b = document.querySelector(`.filters[data-prefix="${prefix}"]`);
     const v = (cls) => b.querySelector(cls)?.value ?? "";
-    return { q: v(".f-q"), rarity: v(".f-rarity"), mvmin: v(".f-mvmin"), mvmax: v(".f-mvmax"), show: v(".f-show"), color: readColorFilter(b.querySelector(".colorsel")) };
+    return {
+      q: v(".f-q"), rarity: v(".f-rarity"), type: v(".f-type"), mvmin: v(".f-mvmin"), mvmax: v(".f-mvmax"),
+      show: v(".f-show"), wanted: !!b.querySelector(".f-wanted")?.checked,
+      color: readColorFilter(b.querySelector(".colorsel")),
+    };
   };
   const mktBox = document.querySelector('.filters[data-prefix="mkt"]');
   const ui = {
     inv: read("inv"),
     mkt: { ...read("mkt"), sort: mktBox.querySelector(".f-sort").value, dir: mktBox.querySelector(".f-dir").dataset.dir || "-1" },
+    lg: { ...read("lg"), sort: $("lg-sort").value },
     plan: { key: planSortKey, dir: planSortDir },
   };
   localStorage.setItem(UI_KEY, JSON.stringify(ui));
@@ -254,9 +259,17 @@ function restoreUi() {
   const apply = (prefix, vals) => {
     const b = document.querySelector(`.filters[data-prefix="${prefix}"]`);
     const set = (cls, val) => { const el = b.querySelector(cls); if (el != null && val != null) el.value = val; };
-    set(".f-q", vals.q); set(".f-rarity", vals.rarity); set(".f-mvmin", vals.mvmin); set(".f-mvmax", vals.mvmax); set(".f-show", vals.show);
+    set(".f-q", vals.q); set(".f-rarity", vals.rarity); set(".f-type", vals.type);
+    set(".f-mvmin", vals.mvmin); set(".f-mvmax", vals.mvmax);
+    // "wanted" used to be a `show` option; it's now its own checkbox, so carry
+    // an older saved filter over instead of dropping it on the floor.
+    const legacyWanted = vals.show === "wanted";
+    set(".f-show", legacyWanted ? "all" : vals.show);
+    const w = b.querySelector(".f-wanted");
+    if (w) w.checked = !!vals.wanted || legacyWanted;
     applyColorFilter(b.querySelector(".colorsel"), vals.color);
   };
+  if (ui.lg) { apply("lg", ui.lg); if (ui.lg.sort) $("lg-sort").value = ui.lg.sort; }
   if (ui.inv) apply("inv", ui.inv);
   if (ui.mkt) {
     apply("mkt", ui.mkt);
