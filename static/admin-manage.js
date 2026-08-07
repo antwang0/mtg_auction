@@ -376,14 +376,17 @@ $("btn-close").onclick = async () => {
 };
 
 $("btn-rebuild-history").onclick = async () => {
+  // Destructive to the checklist, so make that explicit before firing.
+  if (!confirm("Rebuild auction history?\n\nThis also clears every player's \"collected\" ticks — correct ones as well as mistaken ones — so everyone re-ticks what they've picked up. Auction results themselves are not affected.")) return;
   const btn = $("btn-rebuild-history");
   btn.disabled = true;
   try {
     const r = await api("/api/league/history/rebuild", "POST", {});
     $("ctrl-error").textContent = "";
-    btn.textContent = r.rebuilt
-      ? `Rebuilt ${r.rebuilt} round${r.rebuilt === 1 ? "" : "s"}`
-      : "Nothing to rebuild — history is already complete";
+    const parts = [];
+    parts.push(r.rebuilt ? `Rebuilt ${r.rebuilt} round${r.rebuilt === 1 ? "" : "s"}` : "Nothing to rebuild");
+    parts.push(`cleared ${r.claims_cleared} tick${r.claims_cleared === 1 ? "" : "s"}`);
+    btn.textContent = parts.join(", ");
     await refresh();
   } catch (e) {
     $("ctrl-error").textContent = e.message;

@@ -300,6 +300,22 @@ impl Game {
         Ok(())
     }
 
+    /// Clear every player's collected ticks, across every recorded round.
+    /// Returns how many were cleared.
+    ///
+    /// This is a blunt host-side reset for a league where the checklist has got
+    /// out of step — it wipes correct ticks along with mistaken ones, so
+    /// everybody re-ticks what they hold.
+    pub fn clear_all_league_claims(&mut self) -> Result<usize, String> {
+        self.require_league()?;
+        let mut cleared = 0;
+        for c in self.league_clears.iter_mut() {
+            cleared += c.claimed.len();
+            c.claimed.clear();
+        }
+        Ok(cleared)
+    }
+
     /// Tick every card this player won off (or back on) at once. Returns how
     /// many rows actually changed, so the caller can report the count.
     pub fn set_all_league_claims(&mut self, player: PlayerId, claimed: bool) -> Result<usize, String> {

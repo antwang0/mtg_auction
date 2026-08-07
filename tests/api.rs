@@ -727,6 +727,7 @@ async fn league_history_rebuild_is_host_only_and_refills_the_tab() {
     let r: Value = c.post(format!("{base}/api/league/history/rebuild")).header("x-token", &tokens[0])
         .json(&json!({})).send().await.unwrap().json().await.unwrap();
     assert_eq!(r["rebuilt"], 1);
+    assert_eq!(r["claims_cleared"], 0, "nothing was ticked off yet");
     assert_eq!(rows(tokens[0].clone()).await, 1, "the tab has its round back");
 
     // Carol's losing bid is recovered from the ledger, and stays private to her.
@@ -742,4 +743,18 @@ async fn league_history_rebuild_is_host_only_and_refills_the_tab() {
     let r: Value = c.post(format!("{base}/api/league/history/rebuild")).header("x-token", &tokens[0])
         .json(&json!({})).send().await.unwrap().json().await.unwrap();
     assert_eq!(r["rebuilt"], 0);
+
+    // Rebuilding also resets the collected checklist, so a mistaken tick is
+    // recoverable league-wide. Alice ticks her win off, then the host rebuilds.
+    let card_id = carol["rows"][0]["card"].as_u64().unwrap();
+    let r = c.post(format!("{base}/api/league/claim")).header("x-token", &tokens[0])
+        .json(&json!({ "round": 1, "card": card_id, "claimed": true })).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let r: Value = c.post(format!("{base}/api/league/history/rebuild")).header("x-token", &tokens[0])
+        .json(&json!({})).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["claims_cleared"], 1, "the mistaken tick was cleared");
+    let alice: Value = c.get(format!("{base}/api/league/history")).header("x-token", &tokens[0])
+        .send().await.unwrap().json().await.unwrap();
+    assert_eq!(alice["rows"][0]["claimed"], false, "and the player sees it undone");
+    assert_eq!(alice["rows"][0]["won"], true, "while still showing they won it");
 }

@@ -366,13 +366,16 @@ table.grid th[data-sort]::after { content: attr(data-arrow); }
 .filters .f-count { margin-left: auto; font-family: var(--mono); }
 /* ★-only toggle: `label` is display:block/uppercase by default, so re-flow it
    inline to sit alongside the colour buttons. */
-.filters .f-wanted-lbl {
+.filters .f-wanted-lbl,
+.order-row .f-wanted-lbl {
   display: flex; align-items: center; gap: 0.3rem;
   text-transform: none; letter-spacing: 0; font-size: 0.8rem;
   white-space: nowrap; cursor: pointer; user-select: none;
 }
-.filters .f-wanted-lbl:hover { color: var(--accent); }
-.filters .f-wanted { width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.filters .f-wanted-lbl:hover,
+.order-row .f-wanted-lbl:hover { color: var(--accent); }
+.filters .f-wanted,
+.order-row .f-wanted-lbl input { width: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
 
 #plan .want-cell { text-align: center; width: 1.6rem; }
 #plan tbody tr { cursor: pointer; }

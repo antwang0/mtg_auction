@@ -1099,3 +1099,35 @@ fn rebuilt_auction_history_matches_what_the_close_recorded() {
     assert_eq!(g.rebuild_league_clears().unwrap(), 0);
     assert_eq!(norm(&g.league_clears), norm(&recorded), "and nothing was duplicated or altered");
 }
+
+/// The host's rebuild doubles as a reset for the collected checklist, so a
+/// mistaken tick can be undone league-wide. It clears correct ticks too — the
+/// results themselves are untouched.
+#[test]
+fn clearing_claims_resets_every_players_checklist_without_touching_results() {
+    let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();
+    stock_and_open(&mut g, &[("Bog Rat", 2)], 1_000);
+    let rat = card_id(&g, "Bog Rat");
+    g.place_league_bid(1, rat, 500).unwrap();
+    g.place_league_bid(2, rat, 300).unwrap();
+    g.place_league_bid(3, rat, 200).unwrap();
+    g.close_league_auction(&mut Rng::new(1)).unwrap();
+
+    g.set_all_league_claims(1, true).unwrap();
+    g.set_all_league_claims(2, true).unwrap();
+    let before = g.league_clears.clone();
+    assert_eq!(g.league_clears[0].claimed.len(), 2, "both winners ticked their copy off");
+
+    assert_eq!(g.clear_all_league_claims().unwrap(), 2, "both ticks cleared");
+    assert!(g.league_clears.iter().all(|c| c.claimed.is_empty()));
+    // Everything that isn't a tick survives.
+    for (a, b) in g.league_clears.iter().zip(&before) {
+        assert_eq!((a.round, a.card, a.cleared, a.high, a.cover), (b.round, b.card, b.cleared, b.high, b.cover));
+        assert_eq!(a.bids, b.bids);
+        assert_eq!(a.winners, b.winners);
+    }
+    // Winners can tick off again afterwards, and clearing twice is a no-op.
+    assert_eq!(g.clear_all_league_claims().unwrap(), 0);
+    g.set_league_claim(1, 1, rat, true).unwrap();
+    assert_eq!(g.league_clears[0].claimed, vec![1]);
+}

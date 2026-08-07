@@ -253,7 +253,7 @@
            closed before it was being recorded. -->
       <div class="admin hidden" id="rebuild-row">
         <button id="btn-rebuild-history" class="ghost">Rebuild auction history</button>
-        <span class="muted">Reconstructs past rounds from the order ledger for the players' History tab. Safe to re-run; already-recorded rounds are left alone.</span>
+        <span class="muted">Reconstructs past rounds from the order ledger for the players' History tab, and clears everyone's "collected" ticks so a mistaken tick can be undone. Already-recorded rounds keep their results; only the ticks are reset, and every player re-ticks what they've picked up.</span>
       </div>
       <div id="ctrl-error" class="error"></div>
     </section>

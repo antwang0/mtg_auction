@@ -1451,18 +1451,24 @@ pub async fn league_history(State(state): State<AppState>, headers: HeaderMap) -
 }
 
 /// Host: rebuild per-card auction history for rounds that closed before it was
-/// being recorded. Reconstructed from the order ledger and the trade history;
-/// rounds already recorded natively are left untouched.
+/// being recorded, and reset everyone's collected ticks.
+///
+/// The reset is deliberately part of the same action: a rebuilt round arrives
+/// with no ticks anyway, so leaving the recorded rounds' ticks alone would
+/// leave the checklist half-true. It clears correct ticks along with mistaken
+/// ones — the admin UI warns about that before firing.
 pub async fn league_history_rebuild(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<serde_json::Value>, ApiError> {
-    let rebuilt = {
+    let (rebuilt, claims_cleared) = {
         let mut game = state.lock_game();
         if !game.is_admin(&token_of(&headers)) {
             return Err(ApiError::unauthorized("only the host can rebuild auction history"));
         }
-        game.rebuild_league_clears()?
+        let rebuilt = game.rebuild_league_clears()?;
+        let cleared = game.clear_all_league_claims()?;
+        (rebuilt, cleared)
     };
     state.save_and_notify().await;
-    Ok(Json(serde_json::json!({ "rebuilt": rebuilt })))
+    Ok(Json(serde_json::json!({ "rebuilt": rebuilt, "claims_cleared": claims_cleared })))
 }
 
 #[derive(Deserialize)]

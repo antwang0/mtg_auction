@@ -67,7 +67,12 @@ function ahShows(r) {
 
 function ahVisibleRows() {
   const round = $("ah-round").value;
-  const rows = (ahRows || []).filter((r) => (!round || String(r.round) === round) && ahShows(r));
+  // The want list is keyed by card name, and stacks with the Show filter.
+  const wantedOnly = $("ah-wanted").checked;
+  const rows = (ahRows || []).filter((r) =>
+    (!round || String(r.round) === round) &&
+    (!wantedOnly || wants.has(r.card_name)) &&
+    ahShows(r));
   const mode = $("ah-sort").value;
   return rows.sort((a, b) => {
     switch (mode) {
@@ -137,8 +142,9 @@ function renderAuctionHistory() {
           `<td>${outcome ? `<span class="ord-badge ${cls}">${outcome}</span>` : ""}</td>` +
           `<td>${claim}</td>`
         : "";
+      const star = wants.has(r.card_name) ? ` <span class="want-star on" title="on your want list">★</span>` : "";
       return `<tr data-card="${r.card}"><td class="num">${r.round}</td>` +
-        `<td><span class="${rarityClass(r.rarity)}">●</span> ${esc(r.card_name)}</td>` +
+        `<td><span class="${rarityClass(r.rarity)}">●</span> ${esc(r.card_name)}${star}</td>` +
         `<td class="num">×${r.copies}</td><td class="num">${fmtUSD(r.cleared)}</td>` +
         `<td class="num">${fmtUSD(r.cover)}</td><td class="num">${fmtUSD(r.high)}</td>${mine}</tr>`;
     }).join("") +
@@ -209,7 +215,7 @@ $("ah-export-txt").onclick = () => {
 };
 
 // Re-render (no refetch) when the view controls change.
-["ah-round", "ah-show", "ah-sort"].forEach((id) => {
+["ah-round", "ah-show", "ah-sort", "ah-wanted"].forEach((id) => {
   $(id).addEventListener("change", renderAuctionHistory);
 });
 
