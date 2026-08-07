@@ -581,3 +581,87 @@ async fn public_round_history_hides_the_crossing_bid_and_offer() {
         .iter().flat_map(|r| r["trades"].as_array().unwrap()).collect();
     assert!(logged.iter().any(|t| t.get("bid").is_some()), "the host can still audit bids");
 }
+
+/// Claiming won cards over HTTP: a winner ticks their own card off, the tick
+/// is private to them, and a non-winner is refused.
+#[tokio::test]
+async fn league_claims_are_per_player_and_winner_only() {
+    use mtg_auction::engine::{Game, Rng};
+    use mtg_auction::model::{CardPool, Config, GameMode};
+
+    let state = mtg_auction::app::App::new(None);
+    let (tokens, card) = {
+        let mut game = state.lock_game();
+        let cfg = Config {
+            mode: GameMode::League,
+            player_names: vec!["Alice".into(), "Bob".into(), "Carol".into()],
+            starting_money: 10_000,
+            league_close_hour: 20,
+            league_period_weeks: 1,
+            league_first_auction_day: 20_821,
+            league_matchmaking_start_day: 20_814,
+            seed: 7,
+            ..Config::default()
+        };
+        *game = Game::setup(cfg, CardPool::default()).unwrap();
+        let sample = CardPool::sample();
+        let rat = sample.commons.iter().find(|c| c.name == "Bog Rat").unwrap().clone();
+        game.add_cards(CardPool { exact: Some(vec![(rat, 2)]), ..CardPool::default() }).unwrap();
+        game.open_league_auction(1_000).unwrap();
+        let card = game.cards.values().find(|c| c.name == "Bog Rat").unwrap().id;
+        // Alice and Bob win a copy each; Carol is outbid.
+        game.place_league_bid(1, card, 500).unwrap();
+        game.place_league_bid(2, card, 300).unwrap();
+        game.place_league_bid(3, card, 200).unwrap();
+        game.close_league_auction(&mut Rng::new(1)).unwrap();
+        ((1..=3).map(|id| game.tokens[&id].clone()).collect::<Vec<_>>(), card)
+    };
+
+    let app = mtg_auction::api::api_router().with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+    let c = reqwest::Client::new();
+
+    let history = |tok: String| {
+        let c = c.clone();
+        let base = base.clone();
+        async move {
+            c.get(format!("{base}/api/league/history")).header("x-token", tok)
+                .send().await.unwrap().json::<Value>().await.unwrap()
+        }
+    };
+
+    // Nothing is collected to begin with.
+    assert_eq!(history(tokens[0].clone()).await["rows"][0]["claimed"], false);
+
+    // Carol didn't win it, so she can't tick it off.
+    let r = c.post(format!("{base}/api/league/claim")).header("x-token", &tokens[2])
+        .json(&json!({ "round": 1, "card": card, "claimed": true })).send().await.unwrap();
+    assert_eq!(r.status(), 400);
+
+    // Logging in is required at all.
+    let r = c.post(format!("{base}/api/league/claim"))
+        .json(&json!({ "round": 1, "card": card, "claimed": true })).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+
+    // Alice ticks hers off — and Bob's view of the same card is untouched.
+    let r = c.post(format!("{base}/api/league/claim")).header("x-token", &tokens[0])
+        .json(&json!({ "round": 1, "card": card, "claimed": true })).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(history(tokens[0].clone()).await["rows"][0]["claimed"], true);
+    assert_eq!(history(tokens[1].clone()).await["rows"][0]["claimed"], false, "claims are per player");
+    assert_eq!(history(tokens[2].clone()).await["rows"][0]["claimed"], false, "and never set for a non-winner");
+
+    // Mark-all reports what it changed, and is idempotent.
+    let r: Value = c.post(format!("{base}/api/league/claim/all")).header("x-token", &tokens[1])
+        .json(&json!({ "claimed": true })).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["changed"], 1, "Bob's single win");
+    let r: Value = c.post(format!("{base}/api/league/claim/all")).header("x-token", &tokens[1])
+        .json(&json!({ "claimed": true })).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["changed"], 0, "already collected");
+    // Carol won nothing, so there is nothing for her to mark.
+    let r: Value = c.post(format!("{base}/api/league/claim/all")).header("x-token", &tokens[2])
+        .json(&json!({ "claimed": true })).send().await.unwrap().json().await.unwrap();
+    assert_eq!(r["changed"], 0);
+}

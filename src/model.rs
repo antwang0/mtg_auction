@@ -383,6 +383,12 @@ pub struct LeagueClear {
     /// Everyone who took a copy — including players handed a free leftover
     /// copy, who are therefore winners with no bid in `bids`.
     pub winners: Vec<PlayerId>,
+    /// Which winners have ticked this card off as physically collected. League
+    /// cards change hands in person and no deliveries are tracked, so this is
+    /// purely the player's own checklist — each winner sees only their own
+    /// tick. A player only ever appears here if they also appear in `winners`.
+    #[serde(default)]
+    pub claimed: Vec<PlayerId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

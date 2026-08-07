@@ -62,6 +62,8 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/league/bid/cancel", post(cancel_league_bid))
         .route("/api/league/open", post(open_league_auction))
         .route("/api/league/history", get(league_history))
+        .route("/api/league/claim", post(league_claim))
+        .route("/api/league/claim/all", post(league_claim_all))
         .route("/api/inventory/add", post(inventory_add))
         .route("/api/inventory/remove", post(inventory_remove))
 }
@@ -1407,6 +1409,9 @@ pub struct LeagueHistoryRow {
     my_bid: Option<Cents>,
     /// Whether the caller took a copy (possibly a free leftover, with no bid).
     won: bool,
+    /// Whether the caller has ticked this win off as collected. Always false
+    /// for a card they didn't win, and never reflects anyone else's tick.
+    claimed: bool,
 }
 
 #[derive(Serialize)]
@@ -1438,9 +1443,46 @@ pub async fn league_history(State(state): State<AppState>, headers: HeaderMap) -
             cover: c.cover,
             my_bid: me.and_then(|id| c.bids.iter().find(|(p, _)| *p == id).map(|(_, price)| *price)),
             won: me.is_some_and(|id| c.winners.contains(&id)),
+            claimed: me.is_some_and(|id| c.claimed.contains(&id)),
         })
         .collect();
     Ok(Json(LeagueHistoryResponse { rows }))
+}
+
+#[derive(Deserialize)]
+pub struct ClaimRequest {
+    round: u32,
+    card: CardId,
+    claimed: bool,
+}
+
+/// Tick one won card off as physically collected. Personal bookkeeping — it
+/// moves no cards and no money, and only the winner sees their own tick.
+pub async fn league_claim(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<ClaimRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    {
+        let mut game = state.lock_game();
+        let me = require_player(&game, &headers)?;
+        game.set_league_claim(me, req.round, req.card, req.claimed)?;
+    }
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct ClaimAllRequest {
+    claimed: bool,
+}
+
+/// Tick every card you've won off at once, for a player catching up on a
+/// backlog of pickups. Returns how many rows changed.
+pub async fn league_claim_all(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<ClaimAllRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    let changed = {
+        let mut game = state.lock_game();
+        let me = require_player(&game, &headers)?;
+        game.set_all_league_claims(me, req.claimed)?
+    };
+    state.save_and_notify().await;
+    Ok(Json(serde_json::json!({ "changed": changed })))
 }
 
 #[derive(Deserialize)]

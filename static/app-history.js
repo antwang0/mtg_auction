@@ -44,13 +44,22 @@ function ahOutcome(r) {
   return r.my_bid == null ? "" : "outbid";
 }
 
-// The rows currently on screen, after the round / mine-only filters and the
-// chosen sort. Exports use this too, so what you download is what you see.
+// The rows currently on screen, after the round / show filters and the chosen
+// sort. Exports use this too, so what you download is what you see.
+function ahShows(r) {
+  switch ($("ah-show").value) {
+    case "bid": return r.my_bid != null;
+    // "Won" deliberately isn't "bid on and won": a free leftover copy is a
+    // card you won with no bid, and it still has to be collected.
+    case "won": return r.won;
+    case "unclaimed": return r.won && !r.claimed;
+    default: return true;
+  }
+}
+
 function ahVisibleRows() {
   const round = $("ah-round").value;
-  const mineOnly = $("ah-mine").checked;
-  const rows = (ahRows || []).filter((r) =>
-    (!round || String(r.round) === round) && (!mineOnly || r.my_bid != null));
+  const rows = (ahRows || []).filter((r) => (!round || String(r.round) === round) && ahShows(r));
   const mode = $("ah-sort").value;
   return rows.sort((a, b) => {
     switch (mode) {
@@ -68,6 +77,7 @@ function ahVisibleRows() {
 function renderAuctionHistory() {
   if (!state || !isLeague(state)) return;
   const box = $("ah-table");
+  ahClaimInfo();
 
   // Keep the round picker in step with the data, preserving the selection.
   const sel = $("ah-round");
@@ -101,14 +111,19 @@ function renderAuctionHistory() {
     `<th class="num" title="The one price every winner paid">Clearing</th>` +
     `<th class="num" title="Highest bid that won nothing">Cover</th>` +
     `<th class="num" title="Highest bid of the round">High</th>` +
-    (loggedIn ? `<th class="num">Your bid</th><th></th>` : "") +
+    (loggedIn ? `<th class="num">Your bid</th><th></th><th title="Tick off the cards you've physically collected">Collected</th>` : "") +
     `</tr></thead><tbody>` +
     rows.map((r) => {
       const outcome = ahOutcome(r);
       const cls = r.won ? "buy" : outcome ? "sell" : "";
+      // Only a card you won can be collected, so other rows leave the cell empty.
+      const claim = r.won
+        ? `<input type="checkbox" class="ah-claim" data-round="${r.round}" data-card="${r.card}"${r.claimed ? " checked" : ""} title="collected from the host" />`
+        : "";
       const mine = loggedIn
         ? `<td class="num">${fmtUSD(r.my_bid)}</td>` +
-          `<td>${outcome ? `<span class="ord-badge ${cls}">${outcome}</span>` : ""}</td>`
+          `<td>${outcome ? `<span class="ord-badge ${cls}">${outcome}</span>` : ""}</td>` +
+          `<td>${claim}</td>`
         : "";
       return `<tr data-card="${r.card}"><td class="num">${r.round}</td>` +
         `<td><span class="${rarityClass(r.rarity)}">●</span> ${esc(r.card_name)}</td>` +
@@ -116,6 +131,21 @@ function renderAuctionHistory() {
         `<td class="num">${fmtUSD(r.cover)}</td><td class="num">${fmtUSD(r.high)}</td>${mine}</tr>`;
     }).join("") +
     `</tbody></table>`;
+}
+
+// The pickup checklist. Counts cover every card you've won, not just the
+// filtered view, because "mark all" ticks off the lot.
+function ahClaimInfo() {
+  const wins = (ahRows || []).filter((r) => r.won);
+  const done = wins.filter((r) => r.claimed).length;
+  const show = state && state.me != null && wins.length > 0;
+  $("ah-claim-row").classList.toggle("hidden", !show);
+  if (!show) return;
+  $("ah-claim-info").textContent =
+    `${done} of ${wins.length} won card${wins.length === 1 ? "" : "s"} collected`;
+  const all = done === wins.length;
+  $("ah-claim-all").textContent = all ? "Unmark all collected" : "Mark all collected";
+  $("ah-claim-all").dataset.claimed = all ? "1" : "0";
 }
 
 function ahExportInfo(n) {
@@ -127,7 +157,7 @@ function ahExportInfo(n) {
 // ---- export ----
 // Both formats carry the same columns as the table, so a spreadsheet and a
 // `cut -f` pipeline see the same history. Cents are written as plain dollars.
-const AH_EXPORT_HEADER = ["round", "card", "rarity", "copies", "clearing_usd", "cover_usd", "high_usd", "your_bid_usd", "result"];
+const AH_EXPORT_HEADER = ["round", "card", "rarity", "copies", "clearing_usd", "cover_usd", "high_usd", "your_bid_usd", "result", "collected"];
 const ahUsd = (c) => (c == null ? "" : (c / 100).toFixed(2));
 
 function ahExportRows() {
@@ -135,6 +165,7 @@ function ahExportRows() {
     r.round, r.card_name, r.rarity, r.copies,
     ahUsd(r.cleared), ahUsd(r.cover), ahUsd(r.high), ahUsd(r.my_bid),
     ahOutcome(r) || "no bid",
+    r.won ? (r.claimed ? "yes" : "no") : "",
   ]);
 }
 
@@ -158,13 +189,46 @@ $("ah-export-txt").onclick = () => {
 };
 
 // Re-render (no refetch) when the view controls change.
-["ah-round", "ah-mine", "ah-sort"].forEach((id) => {
+["ah-round", "ah-show", "ah-sort"].forEach((id) => {
   $(id).addEventListener("change", renderAuctionHistory);
 });
+
+// ---- claiming ----
+// The tick is applied to the cached row and re-rendered straight away so it
+// feels instant; if the server rejects it we resync rather than leave a lie
+// on screen.
+async function ahClaim(apply, path, body) {
+  apply();
+  renderAuctionHistory();
+  try {
+    await api(path, "POST", body);
+    $("ah-error").textContent = "";
+  } catch (err) {
+    $("ah-error").textContent = err.message;
+    loadAuctionHistory();
+  }
+}
+
+$("ah-table").addEventListener("change", (e) => {
+  const box = e.target.closest(".ah-claim");
+  if (!box) return;
+  const round = Number(box.dataset.round), card = Number(box.dataset.card), claimed = box.checked;
+  const row = (ahRows || []).find((r) => r.round === round && r.card === card);
+  ahClaim(() => { if (row) row.claimed = claimed; }, "/api/league/claim", { round, card, claimed });
+});
+
+$("ah-claim-all").onclick = () => {
+  const claimed = $("ah-claim-all").dataset.claimed !== "1";
+  ahClaim(
+    () => (ahRows || []).forEach((r) => { if (r.won) r.claimed = claimed; }),
+    "/api/league/claim/all", { claimed });
+};
 // Load on first open of the tab; syncAuctionHistory keeps it fresh after that.
 document.querySelector('.tab[data-tab="history"]').addEventListener("click", syncAuctionHistory);
-// Card names open the usual card modal.
+// Card names open the usual card modal — but not when the click was meant for
+// the row's collected tick.
 $("ah-table").addEventListener("click", (e) => {
+  if (e.target.closest(".ah-claim")) return;
   const tr = e.target.closest("tr[data-card]");
   if (tr) openModal(Number(tr.dataset.card));
 });

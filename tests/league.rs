@@ -969,3 +969,65 @@ fn zero_and_negative_league_bids_are_rejected() {
     assert_eq!(c.bids.len(), 1, "only the real bid was ever recorded");
     assert!(c.winners.contains(&1));
 }
+
+/// Ticking won cards off as physically collected. League cards change hands in
+/// person, so this is a personal checklist: it moves no cards and no money,
+/// and only a winner may tick a card off.
+#[test]
+fn only_winners_can_claim_and_claims_are_per_player() {
+    let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();
+    stock_and_open(&mut g, &[("Bog Rat", 2)], 1_000);
+    let rat = card_id(&g, "Bog Rat");
+    g.place_league_bid(1, rat, 500).unwrap();
+    g.place_league_bid(2, rat, 300).unwrap();
+    g.place_league_bid(3, rat, 200).unwrap();
+    g.close_league_auction(&mut Rng::new(1)).unwrap();
+
+    // Carol was outbid, so she has nothing to collect.
+    assert!(g.set_league_claim(3, 1, rat, true).is_err(), "you can't claim what you didn't win");
+    assert!(g.set_league_claim(1, 9, rat, true).is_err(), "nor a round that didn't happen");
+
+    // Alice ticks hers off; Bob's copy of the same card is untouched.
+    g.set_league_claim(1, 1, rat, true).unwrap();
+    let c = g.league_clears.iter().find(|c| c.card == rat).unwrap();
+    assert_eq!(c.claimed, vec![1], "one winner's tick doesn't collect for the other");
+    assert_eq!(c.winners, vec![1, 2], "claiming changes nothing about who won");
+
+    // Ticking twice is idempotent, and it can be undone.
+    g.set_league_claim(1, 1, rat, true).unwrap();
+    assert_eq!(g.league_clears[0].claimed, vec![1]);
+    g.set_league_claim(1, 1, rat, false).unwrap();
+    assert!(g.league_clears[0].claimed.is_empty());
+
+    // No cards or money moved.
+    assert_eq!(g.players[&1].held(rat), 1);
+    assert_eq!(g.players[&1].balance, 10_000 - 300 + 2_500);
+}
+
+/// "Mark all collected" ticks off every card you won and nothing else.
+#[test]
+fn claim_all_covers_only_your_own_wins() {
+    let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();
+    stock_and_open(&mut g, &[("Bog Rat", 1), ("Torch Bearer", 1)], 1_000);
+    let rat = card_id(&g, "Bog Rat");
+    g.place_league_bid(1, rat, 500).unwrap();
+    g.close_league_auction(&mut Rng::new(1)).unwrap();
+    // Alice won the rat outright; the unbid torch went free to someone.
+    let torch = card_id(&g, "Torch Bearer");
+    let torch_winner = g.league_clears.iter().find(|c| c.card == torch).unwrap().winners[0];
+
+    let changed = g.set_all_league_claims(1, true).unwrap();
+    let alice_wins = g.league_clears.iter().filter(|c| c.winners.contains(&1)).count();
+    assert_eq!(changed, alice_wins, "every win Alice had was ticked off");
+    for c in &g.league_clears {
+        assert_eq!(c.claimed.contains(&1), c.winners.contains(&1), "and only her wins");
+    }
+    // Re-running changes nothing; unmarking clears them again.
+    assert_eq!(g.set_all_league_claims(1, true).unwrap(), 0, "already collected");
+    assert_eq!(g.set_all_league_claims(1, false).unwrap(), alice_wins);
+    assert!(g.league_clears.iter().all(|c| !c.claimed.contains(&1)));
+
+    // A free leftover copy still has to be collected, so it is claimable.
+    g.set_league_claim(torch_winner, 1, torch, true).unwrap();
+    assert!(g.league_clears.iter().find(|c| c.card == torch).unwrap().claimed.contains(&torch_winner));
+}

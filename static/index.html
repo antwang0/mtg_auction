@@ -310,7 +310,14 @@
             <label class="muted">Round
               <select id="ah-round"><option value="">all rounds</option></select>
             </label>
-            <label class="muted" title="Only cards you placed a bid on"><input type="checkbox" id="ah-mine" /> only my bids</label>
+            <label class="muted">Show
+              <select id="ah-show">
+                <option value="all" selected>all cards</option>
+                <option value="bid">cards you bid on</option>
+                <option value="won">cards you won</option>
+                <option value="unclaimed">cards you won, not collected</option>
+              </select>
+            </label>
             <label class="muted">Sort
               <select id="ah-sort">
                 <option value="round" selected>Newest round first</option>
@@ -318,6 +325,12 @@
                 <option value="name">Card name</option>
               </select>
             </label>
+          </div>
+          <!-- League cards are handed over in person, so winners tick off what
+               they've actually collected. Personal bookkeeping only. -->
+          <div class="order-row" id="ah-claim-row">
+            <span id="ah-claim-info" class="muted"></span>
+            <button type="button" id="ah-claim-all" class="ghost">Mark all collected</button>
           </div>
           <div class="export-row">
             <button type="button" id="ah-export-txt" class="ghost">Export history (.txt)</button>

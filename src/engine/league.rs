@@ -152,6 +152,52 @@ impl Game {
         Ok(())
     }
 
+    // ---- claiming winnings -----------------------------------------------
+    //
+    // League cards are handed over in person and no deliveries are recorded,
+    // so a winner ticks off what they've physically collected. The tick is
+    // personal bookkeeping: it moves no cards and no money, and each winner
+    // sees only their own.
+
+    /// Tick one won card off (or back on) as collected. Only a winner of that
+    /// card in that round may claim it.
+    pub fn set_league_claim(&mut self, player: PlayerId, round: u32, card: CardId, claimed: bool) -> Result<(), String> {
+        self.require_league()?;
+        let c = self
+            .league_clears
+            .iter_mut()
+            .find(|c| c.round == round && c.card == card)
+            .ok_or("no such card in that round's auction")?;
+        if !c.winners.contains(&player) {
+            return Err("you didn't win that card".into());
+        }
+        let held = c.claimed.contains(&player);
+        if claimed && !held {
+            c.claimed.push(player);
+        } else if !claimed && held {
+            c.claimed.retain(|p| *p != player);
+        }
+        Ok(())
+    }
+
+    /// Tick every card this player won off (or back on) at once. Returns how
+    /// many rows actually changed, so the caller can report the count.
+    pub fn set_all_league_claims(&mut self, player: PlayerId, claimed: bool) -> Result<usize, String> {
+        self.require_league()?;
+        let mut changed = 0;
+        for c in self.league_clears.iter_mut().filter(|c| c.winners.contains(&player)) {
+            let held = c.claimed.contains(&player);
+            if claimed && !held {
+                c.claimed.push(player);
+                changed += 1;
+            } else if !claimed && held {
+                c.claimed.retain(|p| *p != player);
+                changed += 1;
+            }
+        }
+        Ok(changed)
+    }
+
     /// Close the open auction. Cards resolve one at a time, rarest first and
     /// then alphabetically. Every player implicitly bids 0 on every card, so
     /// each copy always finds a home: with `qty` copies the clearing price is
@@ -266,6 +312,7 @@ impl Game {
                 cover: bids.get(real_winners).map(|b| b.price),
                 bids: bids.iter().map(|b| (b.player, b.price)).collect(),
                 winners: winner_ids,
+                claimed: Vec::new(),
             });
         }
 
