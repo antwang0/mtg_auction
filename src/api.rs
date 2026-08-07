@@ -61,6 +61,7 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/league/bid", post(place_league_bid))
         .route("/api/league/bid/cancel", post(cancel_league_bid))
         .route("/api/league/open", post(open_league_auction))
+        .route("/api/league/history", get(league_history))
         .route("/api/inventory/add", post(inventory_add))
         .route("/api/inventory/remove", post(inventory_remove))
 }
@@ -1332,6 +1333,59 @@ pub async fn open_league_auction(State(state): State<AppState>, headers: HeaderM
     };
     state.save_and_notify().await;
     Ok(Json(serde_json::json!({ "closes": closes })))
+}
+
+/// One card's result in one closed league auction, as the caller may see it:
+/// the public aggregates, plus their own bid and whether they took a copy.
+#[derive(Serialize)]
+pub struct LeagueHistoryRow {
+    round: u32,
+    card: CardId,
+    card_name: String,
+    rarity: Rarity,
+    copies: u32,
+    cleared: Cents,
+    high: Option<Cents>,
+    cover: Option<Cents>,
+    /// The caller's own bid, or `None` if they didn't bid on this card. Another
+    /// player's bid is never served here — the auction is sealed.
+    my_bid: Option<Cents>,
+    /// Whether the caller took a copy (possibly a free leftover, with no bid).
+    won: bool,
+}
+
+#[derive(Serialize)]
+pub struct LeagueHistoryResponse {
+    rows: Vec<LeagueHistoryRow>,
+}
+
+/// The per-card history of every closed league auction. Served on its own
+/// rather than folded into `/api/state` because it is a cold, bulky payload
+/// that only matters when a player opens the History tab, and `/api/state` is
+/// polled by everyone.
+pub async fn league_history(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<LeagueHistoryResponse>, ApiError> {
+    let game = state.lock_game();
+    if !game.is_league() {
+        return Err("auction history is league-only".to_string().into());
+    }
+    let me = game.player_for_token(&token_of(&headers));
+    let rows = game
+        .league_clears
+        .iter()
+        .map(|c| LeagueHistoryRow {
+            round: c.round,
+            card: c.card,
+            card_name: c.card_name.clone(),
+            rarity: game.cards.get(&c.card).map_or(Rarity::Common, |card| card.rarity),
+            copies: c.copies,
+            cleared: c.cleared,
+            high: c.high,
+            cover: c.cover,
+            my_bid: me.and_then(|id| c.bids.iter().find(|(p, _)| *p == id).map(|(_, price)| *price)),
+            won: me.is_some_and(|id| c.winners.contains(&id)),
+        })
+        .collect();
+    Ok(Json(LeagueHistoryResponse { rows }))
 }
 
 #[derive(Deserialize)]

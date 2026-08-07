@@ -143,6 +143,11 @@ pub struct Game {
     pub league_bids: Vec<LeagueBid>,
     #[serde(default)]
     league_bid_seq: u64,
+    /// Per-card outcome of every league auction that has closed, oldest first.
+    /// Pruned to [`LEAGUE_CLEAR_ROUNDS`] rounds so a long-running league can't
+    /// grow the save file without bound.
+    #[serde(default)]
+    pub league_clears: Vec<LeagueClear>,
 }
 
 /// The reserved player id for the auction house. It is never a real player (real
@@ -177,6 +182,7 @@ impl Default for Game {
             report_seq: 0,
             league_bids: Vec::new(),
             league_bid_seq: 0,
+            league_clears: Vec::new(),
         }
     }
 }

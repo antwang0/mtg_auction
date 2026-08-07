@@ -36,6 +36,7 @@
         <button class="tab active" data-tab="home">Home <span id="todo-badge" class="tab-badge hidden"></span></button>
         <button class="tab" data-tab="inventory">Inventory</button>
         <button class="tab hidden" data-tab="auction">Auction</button>
+        <button class="tab hidden" data-tab="history">History</button>
         <button class="tab" data-tab="market">Market</button>
         <button class="tab" data-tab="ladder">Ladder</button>
         <button class="tab" data-tab="calendar">Calendar</button>
@@ -299,6 +300,34 @@
         </section>
       </div>
 
+      <!-- ===== AUCTION HISTORY TAB (league) ===== -->
+      <div id="tab-history" class="tabpane hidden">
+        <section class="card">
+          <h2>Auction History <span id="ah-status" class="muted"></span></h2>
+          <p class="muted">How each card resolved at every close. <b>Clearing</b> is the one price all its winners paid. <b>Cover</b> is the highest bid that won nothing — beating it would have taken a copy, so it's the honest measure of what you needed. <b>High</b> is the top bid. Prices are shown after amendment: a bid is trimmed to whatever balance the bidder had left when the card resolved, and the trimmed number is the one that set the price. Only your own bid is ever shown — everyone else's stays sealed.</p>
+          <div id="ah-error" class="error"></div>
+          <div class="order-row">
+            <label class="muted">Round
+              <select id="ah-round"><option value="">all rounds</option></select>
+            </label>
+            <label class="muted" title="Only cards you placed a bid on"><input type="checkbox" id="ah-mine" /> only my bids</label>
+            <label class="muted">Sort
+              <select id="ah-sort">
+                <option value="round" selected>Newest round first</option>
+                <option value="clearing">Clearing price (high → low)</option>
+                <option value="name">Card name</option>
+              </select>
+            </label>
+          </div>
+          <div class="export-row">
+            <button type="button" id="ah-export-txt" class="ghost">Export history (.txt)</button>
+            <button type="button" id="ah-export-csv" class="ghost">Export history (.csv)</button>
+            <span id="ah-export-info" class="muted"></span>
+          </div>
+          <div id="ah-table"></div>
+        </section>
+      </div>
+
       <!-- ===== LADDER TAB ===== -->
       <div id="tab-ladder" class="tabpane hidden">
         <div class="columns">
@@ -401,6 +430,7 @@
   <script src="/app-home.js"></script>
   <script src="/app-market.js"></script>
   <script src="/app-league.js"></script>
+  <script src="/app-history.js"></script>
   <script src="/app-ladder.js"></script>
   <script src="/app.js"></script>
 </body>

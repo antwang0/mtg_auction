@@ -351,6 +351,40 @@ pub struct RoundResult {
     pub clears: Vec<CardClear>,
 }
 
+/// What one card did in one league auction round: the clearing price, the top
+/// of the sealed book, and who bid what.
+///
+/// `bids` is the reason this lives outside [`RoundResult`] — the round results
+/// are broadcast to every client, and a sealed-bid auction must not hand a
+/// player the losing bids of their rivals. Nothing here leaves the server
+/// unfiltered; the API turns it into one row per card carrying the public
+/// aggregates plus *the caller's own* bid. See `league_history` in `api.rs`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LeagueClear {
+    pub round: u32,
+    pub card: CardId,
+    pub card_name: String,
+    /// Copies the house had on the block.
+    pub copies: u32,
+    /// The uniform price every winner paid: the `copies`-th highest bid, or 0
+    /// when fewer players bid than there were copies.
+    pub cleared: Cents,
+    /// Highest bid of the round, and the cover — the highest bid that did *not*
+    /// take a copy. `high` is `None` when nobody bid; `cover` is also `None`
+    /// when every bid won, i.e. there was no losing bid to speak of.
+    ///
+    /// Both are post-amendment: a bid is trimmed to the bidder's remaining
+    /// balance as the round resolves, and the trimmed number is the one the
+    /// clearing maths used, so it is the honest one to report.
+    pub high: Option<Cents>,
+    pub cover: Option<Cents>,
+    /// Every real bid on this card, amended, as `(player, price)`.
+    pub bids: Vec<(PlayerId, Cents)>,
+    /// Everyone who took a copy — including players handed a free leftover
+    /// copy, who are therefore winners with no bid in `bids`.
+    pub winners: Vec<PlayerId>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderKind {

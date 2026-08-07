@@ -133,6 +133,78 @@ fn cards_clear_at_the_nth_highest_bid_and_unsold_cards_carry_over() {
     assert_eq!(g.round, 2);
 }
 
+/// The per-card auction history behind the History tab: clearing price, the
+/// highest bid, and the cover (highest bid that took nothing).
+#[test]
+fn auction_history_records_the_clearing_price_high_bid_and_cover() {
+    let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();
+    stock_and_open(&mut g, &[("Bog Rat", 2), ("Torch Bearer", 1)], 1_000);
+    let rat = card_id(&g, "Bog Rat");
+    let torch = card_id(&g, "Torch Bearer");
+    g.place_league_bid(1, rat, 500).unwrap();
+    g.place_league_bid(2, rat, 300).unwrap();
+    g.place_league_bid(3, rat, 200).unwrap();
+    g.close_league_auction(&mut Rng::new(1)).unwrap();
+
+    let rat_clear = g.league_clears.iter().find(|c| c.card == rat).unwrap();
+    assert_eq!(rat_clear.round, 1);
+    assert_eq!(rat_clear.copies, 2);
+    assert_eq!(rat_clear.cleared, 300, "2 copies clear at the 2nd-highest bid");
+    assert_eq!(rat_clear.high, Some(500));
+    assert_eq!(rat_clear.cover, Some(200), "the highest bid that won nothing");
+    assert_eq!(rat_clear.bids.len(), 3, "every bid is kept, winners and losers");
+    assert_eq!(rat_clear.winners, vec![1, 2]);
+
+    // Nobody bid on the torch: no high, no cover, and its free winner has no bid.
+    let torch_clear = g.league_clears.iter().find(|c| c.card == torch).unwrap();
+    assert_eq!(torch_clear.cleared, 0);
+    assert_eq!(torch_clear.high, None);
+    assert_eq!(torch_clear.cover, None);
+    assert!(torch_clear.bids.is_empty());
+    assert_eq!(torch_clear.winners.len(), 1, "a free copy still records its winner");
+}
+
+/// When every bid wins there is no losing bid, so there is no cover — that is
+/// distinct from a cover of 0, which would mean someone bid nothing.
+#[test]
+fn auction_history_has_no_cover_when_every_bid_wins() {
+    let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();
+    stock_and_open(&mut g, &[("Bog Rat", 5)], 1_000);
+    let rat = card_id(&g, "Bog Rat");
+    g.place_league_bid(1, rat, 500).unwrap();
+    g.place_league_bid(2, rat, 200).unwrap();
+    g.close_league_auction(&mut Rng::new(1)).unwrap();
+
+    let c = g.league_clears.iter().find(|c| c.card == rat).unwrap();
+    assert_eq!(c.cleared, 0, "fewer real bids than copies clears at 0");
+    assert_eq!(c.high, Some(500));
+    assert_eq!(c.cover, None, "both bidders won, so nothing was covered");
+    assert_eq!(c.winners.len(), 3, "two bidders plus one free non-bidder");
+}
+
+/// A bid trimmed to the bidder's remaining balance is reported at the trimmed
+/// price — that is the number the clearing maths actually used.
+#[test]
+fn auction_history_reports_bids_after_amendment() {
+    let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();
+    stock_and_open(&mut g, &[("Avatar of Eternity", 1), ("Bog Rat", 1)], 1_000);
+    let avatar = card_id(&g, "Avatar of Eternity");
+    let rat = card_id(&g, "Bog Rat");
+    // Alice commits nearly everything to the avatar (mythic, resolves first),
+    // leaving her rat bid unaffordable; it is amended down as the round runs.
+    g.place_league_bid(1, avatar, 9_000).unwrap();
+    g.place_league_bid(1, rat, 5_000).unwrap();
+    g.place_league_bid(2, rat, 800).unwrap();
+    g.close_league_auction(&mut Rng::new(1)).unwrap();
+
+    let c = g.league_clears.iter().find(|c| c.card == rat).unwrap();
+    let alice_bid = c.bids.iter().find(|(p, _)| *p == 1).unwrap().1;
+    assert_eq!(alice_bid, 1_000, "trimmed to her $10 left after the avatar");
+    assert_eq!(c.high, Some(1_000), "the high is the amended bid, not the $50 asked");
+    assert_eq!(c.cover, Some(800), "Bob's losing bid");
+    assert_eq!(c.winners, vec![1]);
+}
+
 #[test]
 fn fewer_real_bids_than_copies_clear_at_zero_and_nonbidders_fill_the_rest() {
     let mut g = Game::setup(league_cfg(), CardPool::default()).unwrap();

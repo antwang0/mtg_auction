@@ -457,3 +457,88 @@ async fn scryfall_source_needs_a_set_code() {
     assert_eq!(r.status(), 400);
     assert!(r.json::<Value>().await.unwrap()["error"].as_str().unwrap().contains("set code"));
 }
+
+/// League auction history: the per-card aggregates are public, but the bid
+/// column is not — a sealed-bid auction must never hand a player the bids of
+/// their rivals, so each caller sees only their own.
+#[tokio::test]
+async fn league_history_serves_aggregates_but_only_your_own_bid() {
+    use mtg_auction::engine::{Game, Rng};
+    use mtg_auction::model::{CardPool, Config, GameMode};
+
+    // Build the closed auction directly: stocking a pool over HTTP would need
+    // Scryfall, and these tests stay offline.
+    let state = mtg_auction::app::App::new(None);
+    let tokens: Vec<String> = {
+        let mut game = state.lock_game();
+        let cfg = Config {
+            mode: GameMode::League,
+            player_names: vec!["Alice".into(), "Bob".into(), "Carol".into()],
+            starting_money: 10_000,
+            league_close_hour: 20,
+            league_period_weeks: 1,
+            league_first_auction_day: 20_821,
+            league_matchmaking_start_day: 20_814,
+            seed: 7,
+            ..Config::default()
+        };
+        *game = Game::setup(cfg, CardPool::default()).unwrap();
+        let sample = CardPool::sample();
+        let rat = sample.commons.iter().find(|c| c.name == "Bog Rat").unwrap().clone();
+        game.add_cards(CardPool { exact: Some(vec![(rat, 2)]), ..CardPool::default() }).unwrap();
+        game.open_league_auction(1_000).unwrap();
+        let card = game.cards.values().find(|c| c.name == "Bog Rat").unwrap().id;
+        // Two copies, three bids: clears at 300, high 500, cover 200.
+        game.place_league_bid(1, card, 500).unwrap();
+        game.place_league_bid(2, card, 300).unwrap();
+        game.place_league_bid(3, card, 200).unwrap();
+        game.close_league_auction(&mut Rng::new(1)).unwrap();
+        (1..=3).map(|id| game.tokens[&id].clone()).collect()
+    };
+
+    let app = mtg_auction::api::api_router().with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+    let c = reqwest::Client::new();
+
+    let fetch = |tok: Option<String>| {
+        let c = c.clone();
+        let base = base.clone();
+        async move {
+            let mut req = c.get(format!("{base}/api/league/history"));
+            if let Some(t) = tok {
+                req = req.header("x-token", t);
+            }
+            req.send().await.unwrap().json::<Value>().await.unwrap()
+        }
+    };
+
+    // Alice won at the clearing price, having bid the high.
+    let alice = fetch(Some(tokens[0].clone())).await;
+    let row = &alice["rows"][0];
+    assert_eq!(row["round"], 1);
+    assert_eq!(row["copies"], 2);
+    assert_eq!(row["cleared"], 300, "both copies clear at the 2nd-highest bid");
+    assert_eq!(row["high"], 500);
+    assert_eq!(row["cover"], 200, "the highest bid that took nothing");
+    assert_eq!(row["my_bid"], 500);
+    assert_eq!(row["won"], true);
+    assert!(row.get("bids").is_none(), "the raw bid list must never be served");
+    assert!(row.get("winners").is_none(), "nor the winner list");
+
+    // Carol was the cover: she sees her own losing bid, not Alice's or Bob's.
+    let carol = fetch(Some(tokens[2].clone())).await;
+    let row = &carol["rows"][0];
+    assert_eq!(row["my_bid"], 200);
+    assert_eq!(row["won"], false);
+    assert_eq!(row["cleared"], 300, "the public aggregates are the same for everyone");
+    assert_eq!(row["high"], 500);
+
+    // A logged-out caller gets the aggregates and no bid at all.
+    let anon = fetch(None).await;
+    let row = &anon["rows"][0];
+    assert_eq!(row["cleared"], 300);
+    assert!(row["my_bid"].is_null(), "no token, no bid");
+    assert_eq!(row["won"], false);
+}

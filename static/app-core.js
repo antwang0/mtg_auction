@@ -89,6 +89,7 @@ function render() {
   const league = isLeague(state);
   const tabBtn = (name) => document.querySelector(`.tab[data-tab="${name}"]`);
   tabBtn("auction").classList.toggle("hidden", !league);
+  tabBtn("history").classList.toggle("hidden", !league);
   tabBtn("market").classList.toggle("hidden", league);
   tabBtn("inventory").classList.toggle("hidden", league);
   tabBtn("calendar").classList.toggle("hidden", league);
@@ -154,6 +155,7 @@ function render() {
   renderGallery();
   renderMyOrders();
   renderLeague();
+  syncAuctionHistory();
   renderHome();
   renderTodo();
   renderMonthCalendar();

@@ -21,6 +21,11 @@ use std::collections::HashMap;
 /// Cap on a single player's resting league bids, to bound memory and close work.
 const MAX_LEAGUE_BIDS: usize = 500;
 
+/// How many rounds of per-card auction history to keep. A weekly league would
+/// have to run for a year to reach this, but the bid lists are the one part of
+/// the save file that grows with players × cards × rounds, so it is bounded.
+const LEAGUE_CLEAR_ROUNDS: u32 = 52;
+
 impl Game {
     /// Whether this game runs in league mode.
     pub fn is_league(&self) -> bool {
@@ -219,6 +224,7 @@ impl Game {
                 });
             };
             let winners: Vec<LeagueBid> = bids.iter().take(real_winners).cloned().collect();
+            let mut winner_ids: Vec<PlayerId> = winners.iter().map(|b| b.player).collect();
             for b in &winners {
                 settle(self, b.player, b.price, &mut trades);
                 sold += 1;
@@ -238,16 +244,33 @@ impl Game {
                 rng.shuffle(&mut others);
                 for &p in others.iter().take(leftover as usize) {
                     settle(self, p, 0, &mut trades);
+                    winner_ids.push(p);
                     sold += 1;
                 }
             }
             clears.push(CardClear { card, card_name: self.cards[&card].name.clone(), best_bid, best_offer: None, cleared: Some(price), volume: sold });
+            // The cover is the first bid that missed out: `bids` is sorted
+            // high-to-low and the top `real_winners` of them took the copies.
+            // None when every bid won — there was no losing bid.
+            self.league_clears.push(LeagueClear {
+                round: self.round,
+                card,
+                card_name: card_name.clone(),
+                copies: avail,
+                cleared: price,
+                high: best_bid,
+                cover: bids.get(real_winners).map(|b| b.price),
+                bids: bids.iter().map(|b| (b.player, b.price)).collect(),
+                winners: winner_ids,
+            });
         }
 
         let result = RoundResult { round: self.round, trades, clears };
         self.history.push(result.clone());
         self.league_bids.clear();
         self.round_deadline = None;
+        let oldest_kept = self.round.saturating_sub(LEAGUE_CLEAR_ROUNDS - 1);
+        self.league_clears.retain(|c| c.round >= oldest_kept);
 
         // Stipend, paid immediately after the close.
         let stipend = self.config.weekly_stipend.max(0);
